@@ -1,0 +1,23 @@
+This lesson adds a shell: a command prompt we can type into. It shows a "> " prompt, lets us type a line, and when we press Enter it runs a command. The starting commands are help, clear, about, and echo <text>.
+
+This is a reward lesson, like Rock Paper Scissors was. So no new features to set up!
+
+How input works:
+- The keyboard interrupt handler just appends the character to a line buffer, and echoes (return) it. When we press enter it marks the line as ready.
+- Normal code calls read_line(), which stops until the interrupt marks a line ready, and then copies the line out. The shell loop will then run the command.
+- This way we can later sleep this process and run others in the meantime.
+
+New concepts:
+- A line buffer filled by the interrupt handler, with a "line ready" flag.
+- A blocking read_line() that waits (hlt) for input instead of polling the port.
+- A simple command parser / dispatcher (compare the typed line against known commands).
+- Splitting the shell into its own file (shell.h / shell.cpp).
+
+Files changed / added:
+- keyboard.h / keyboard.cpp  (interrupt-fed line buffer + blocking read_line; old polling getchar removed)
+- idt.cpp                    (keyboard interrupt now hands the scancode to keyboard.cpp)
+- shell.h / shell.cpp        (new: the prompt loop and command dispatch)
+- kernel.cpp                 (call shell_run() after setup instead of the bare idle loop)
+
+WARNING: the interrupt handler and read_line share the line buffer and flags, so those are
+marked volatile. Success = boot, get a "> " prompt, type commands, and see them run.
