@@ -346,8 +346,8 @@
       <div class="emu-wrap">
         <button class="boot-btn" id="boot">&#9654; Boot the latest LeveretOS</button>
         <div class="status" id="status"></div>
-        <div class="interactive" id="note-desktop">The current build is Lesson 12 (Shell). <strong>Click inside the screen</strong> and type a command, try <code>help</code>, then press Enter.</div>
-        <div class="interactive" id="note-touch" style="display:none">The current build is Lesson 12 (Shell). Tap <strong>Tap to type</strong> below, type a command like <code>help</code>, then press Enter.</div>
+        <div class="interactive" id="note-desktop">The current build is Lesson 13 (Timer &amp; Clock). <strong>Click inside the screen</strong>, type clock, then press Enter to see the time.</div>
+        <div class="interactive" id="note-touch" style="display:none">The current build is Lesson 13 (Timer &amp; Clock). Tap <strong>Tap to type</strong> below, type clock, then press Enter to see the time.</div>
         <div id="screen_container">
           <div></div>
           <canvas style="display:none"></canvas>
@@ -408,6 +408,7 @@
           <tr onclick="location.href='lessons/10/'"><td class="num">10</td><td class="name">Interrupts (IDT)</td><td class="desc">Catch CPU exceptions with our own interrupt table</td><td class="boot">Boot &rarr;</td></tr>
           <tr onclick="location.href='lessons/11/'"><td class="num">11</td><td class="name">Keyboard via interrupts</td><td class="desc">The keyboard now sends key presses, instead of constant polling</td><td class="boot">Boot &rarr;</td></tr>
           <tr onclick="location.href='lessons/12/'"><td class="num">12</td><td class="name">Shell</td><td class="desc">A command prompt the user can type into, with the commands help, clear, about, and echo</td><td class="boot">Boot &rarr;</td></tr>
+          <tr onclick="location.href='lessons/13/'"><td class="num">13</td><td class="name">Timer &amp; Clock</td><td class="desc">A timer, and a clock command which shows the real time</td><td class="boot">Boot &rarr;</td></tr>
         </tbody>
       </table>
     </section>
@@ -464,7 +465,7 @@ qemu-system-i386 -cdrom 06-Scrolling/build/LeveretOS-Scrolling.iso</code></pre>
       <ul class="milestones">
         <li class="done"><span class="box">&#10003;</span><span>Play a game (Rock Paper Scissors)</span></li>
         <li class="done"><span class="box">&#10003;</span><span>Type commands into terminal</span></li>
-        <li><span class="box">&#10003;</span><span>Create a running clock</span></li>
+        <li class="done"><span class="box">&#10003;</span><span>Create a running clock</span></li>
         <li><span class="box">&#10003;</span><span>Login screen at startup</span></li>
         <li><span class="box">&#10003;</span><span>Graphics processing, so our browser gets a 2D display.</span></li>
         <li><span class="box">&#10003;</span><span>Open a page from the web</span></li>

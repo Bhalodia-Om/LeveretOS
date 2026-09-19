@@ -16,7 +16,7 @@ The first big goal is a LeveretOS that can go online and open a web page. These 
 
 - [x] Play a game on it (Rock Paper Scissors)
 - [x] Type commands into it, like a real terminal
-- [ ] Show a running clock
+- [x] Show a running clock
 - [ ] Greet you with a login screen at startup
 - [ ] Graphics processing, so our browser gets a display.
 - [ ] Open a page from the web
@@ -47,6 +47,7 @@ Once we can browse the web, the goals will get bigger. This is where LeveretOS w
 | 10 | Interrupts (IDT) | Catch CPU exceptions with our own interrupt table |
 | 11 | Keyboard via interrupts | The keyboard now sends key presses, instead of constant polling |
 | 12 | Shell | A command prompt you can type into, with the commands help, clear, about, and echo |
+| 13 | Timer & Clock | A timer, and a clock command which shows the real time |
 
 ## Building and running a lesson
 

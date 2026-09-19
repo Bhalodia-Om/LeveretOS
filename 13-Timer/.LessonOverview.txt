@@ -1,0 +1,33 @@
+This lesson will give LeveretOS a live clock. It combines two different clock chips:
+
+1. The PIT (Programmable Interval Timer): a chip that fires a hardware interrupt at a steady rate, like a metronome. Each fire is cakked a tick.  
+   We use it to know when a second has passed, so the clock can update itself.
+
+2. The RTC (Real-Time Clock): a separate, battery powered chip that keeps the real time and date even while the computer is off. 
+We will read it to get the actual hours, minutes, and seconds.
+
+Together they give a "clock" command in the shell: it reads the real time from the RTC and redraws it every second using the PIT, making a live ticking clock. 
+The user can then press a key to stop it and return to the prompt.
+
+The timer is IRQ0, which after our PIC remap (lesson 11) is interrupt 32. That is the exact slot that caused the General Protection Fault back in lesson 11 and why we masked. 
+Now we handle it, so we can unmask it.
+
+New concepts:
+- The PIT: set its firing rate by writing a divisor to its ports (base = 1193182 Hz; rate = base / divisor). We will then create a tick counter incremented by its interrupt.
+- The RTC: read time and date through ports 0x70 (select field) and 0x71 (read value), and convert BCD (binary-coded decimal, in which 0x42 means the number 42, not 66) to normal numbers.
+- Handling a second hardware IRQ (IRQ0/timer) alongside the keyboard (IRQ1).
+- A command that runs its own loop and updates the screen over time, then exits on a keypress.
+
+Files changed / added:
+- timer.h / timer.cpp   (new: program the PIT, hold the tick counter)
+- rtc.h / rtc.cpp       (new: read the real time/date from the RTC, BCD conversion)
+- idt_stubs.s           (add an irq0 stub for interrupt 32)
+- idt.cpp               (register slot 32, timer branch calls timer_tick())
+- pic.cpp               (unmask IRQ0 as well as IRQ1)
+- shell.cpp             (add the live "clock" command)
+- kernel.cpp            (call timer_init())
+
+WARNING: the tick counter is shared between the timer interrupt and normal code, so it's
+volatile. The clock command redraws in place each second. 
+
+Success = boot to the shell, type "clock", see the real time ticking every second, and press a key to return to the prompt.
