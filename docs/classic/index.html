@@ -5,185 +5,147 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>LeveretOS, an Operating System built from scratch, one lesson at a time</title>
 <meta name="description" content="LeveretOS is a small educational operating system built completely from scratch in C++, one commented lesson at a time. This is the classic-web version.">
-<style type="text/css">
-  body {
-    background-color: #f4f0e6;
-    color: #201a12;
-    font-family: Georgia, "Times New Roman", serif;
-    font-size: 17px;
-    line-height: 1.5;
-    margin: 0;
-  }
-  .page {
-    max-width: 640px;
-    margin: 0 auto;
-    padding: 24px 22px 40px 22px;
-    background-color: #fffdf7;
-    border-left: 2px solid #2e7d32;
-    border-right: 2px solid #2e7d32;
-  }
-  h1 { color: #1b5e20; font-size: 30px; margin: 6px 0 2px 0; }
-  h2 { color: #2e7d32; border-bottom: 2px solid #2e7d32; padding-bottom: 3px; margin-top: 30px; }
-  h3 { color: #33691e; margin-bottom: 4px; }
-  a { color: #0645ad; }
-  a:visited { color: #663399; }
-  .tag { color: #5a5040; font-style: italic; margin-top: 0; }
-  .done { color: #1b5e20; font-weight: bold; }
-  .todo { color: #7a6a52; }
-  hr { border: 0; border-top: 1px solid #c9bfa8; margin: 26px 0; }
-  .banner { text-align: center; }
-  .banner img { width: 96px; height: 96px; }
-  .photo { text-align: center; margin: 18px 0; }
-  .photo img { width: 260px; max-width: 90%; border: 4px solid #2e7d32; }
-  .caption { color: #5a5040; font-size: 14px; font-style: italic; }
-  .box {
-    background-color: #eef6ee;
-    border: 1px solid #2e7d32;
-    padding: 10px 14px;
-    margin: 18px 0;
-  }
-  .foot { text-align: center; color: #5a5040; font-size: 14px; margin-top: 30px; }
-</style>
 </head>
-<body>
-<div class="page">
 
-<div class="banner">
-  <img src="../favicon.svg" alt="The LeveretOS hare logo">
-  <h1>LeveretOS</h1>
-  <p class="tag">An operating system built from scratch, one lesson at a time.</p>
-</div>
+<body bgcolor="#e8f0e0" text="#000000" link="#0000cc" vlink="#663399" alink="#cc0000">
 
-<hr>
+<table width="100%" cellpadding="8" cellspacing="0" bgcolor="#1b5e20">
+<tr>
+<td width="60"><img src="../favicon.svg" alt="LeveretOS hare logo" width="52" height="52"></td>
+<td><font color="#ffffff" size="6" face="Georgia, serif"><b>LeveretOS</b></font><br>
+<font color="#c8e6c9" size="2" face="Georgia, serif">An operating system built from scratch, one lesson at a time.</font></td>
+</tr>
+</table>
+
+<font face="Georgia, Times New Roman, serif" size="3">
 
 <p>
 Welcome. LeveretOS is a small operating system written completely from scratch in C++.
-There is no Linux, no Windows, nothing underneath it, just our own code running directly
-on the machine, starting from the very first instruction at boot.
+There is no Linux, no Windows, nothing underneath it, just our own code running directly on
+the machine, starting from the very first instruction at boot. It is built as a series of
+lessons: each one adds a single new feature on top of the last, and every new piece of code
+is commented for beginners. The whole project can be read like a step-by-step guide to how
+an operating system actually works, from a blank screen all the way toward connecting to the web.
 </p>
 
-<p>
-It is built as a series of lessons. Each lesson adds one new feature on top of the last,
-and every new piece of code is commented for beginners. The idea is that the whole project
-can be read like a step-by-step guide to how an operating system actually works, from a
-blank screen all the way toward connecting to the web.
-</p>
-
-<div class="box">
-<b>You are viewing the classic-web version of this site.</b> It is plain HTML with no
-JavaScript, made to be light, fast, and readable on almost anything, including the little
+<table width="100%" cellpadding="6" cellspacing="0" bgcolor="#c8e6c9"><tr><td>
+<font face="Georgia, serif" size="2">
+<b>Note:</b> you are viewing the <b>classic-web version</b> of this site. It is plain HTML with
+no JavaScript, made to be light and fast and readable on almost anything, including the little
 browser that LeveretOS is being built to have one day. The modern version, with a live
-in-browser emulator for every lesson, lives at the link near the bottom.
-</div>
+in-browser emulator for every lesson, is linked at the bottom of the page.
+</font>
+</td></tr></table>
 
-<hr>
+<hr size="3" color="#1b5e20">
 
-<h2>Why "LeveretOS"?</h2>
+<h2><font color="#1b5e20">Why "LeveretOS"?</font></h2>
 
-<div class="photo">
-  <img src="../leveret.jpg" alt="A leveret, a young hare, resting in grass">
-  <br>
-  <span class="caption">A leveret: a young hare. Photo by Tony Stoddard on Unsplash.</span>
-</div>
+<img src="../leveret.jpg" alt="A leveret, a young hare, resting in grass" width="230" align="right" hspace="16" vspace="6" border="3" style="border-color:#1b5e20;">
 
 <p>
-A leveret is a baby hare, small, quick, and one of the fastest-growing young animals
-around. It felt like the right mascot for an operating system that started as almost
-nothing and grows a little better with every lesson.
+A leveret is a baby hare, small, quick, and one of the fastest-growing young animals around.
+It felt like the right mascot for an operating system that started as almost nothing and
+grows a little better with every lesson.
 </p>
-
-<hr>
-
-<h2>The idea</h2>
 
 <p>
-Each lesson has its own numbered folder and adds one new feature on top of the last.
-New or changed code carries comments to walk you through each step, while code reused
-from earlier lessons is left uncommented so the new work stands out. Every lesson can be
-built into a bootable image and run in an emulator, or booted right in your browser on the
-modern site.
+The project started with nothing but a boot message on a black screen. Lesson by lesson it
+has learned to move a cursor, read the keyboard, print numbers, scroll like a real terminal,
+play a game, and, most recently, take control of the processor's memory segments and interrupts.
+Like the animal it is named after, it is small and quick, and it is growing fast.
 </p>
 
-<hr>
+<br clear="all">
 
-<h2>The goal</h2>
+<hr size="3" color="#1b5e20">
+
+<h2><font color="#1b5e20">The idea</font></h2>
 
 <p>
-The first big goal is a version of LeveretOS that can go online and open a web page.
-These are the checkpoints along the way, ticked off as we reach them:
+Each lesson has its own numbered folder and adds one new feature on top of the last. New or
+changed code carries comments to walk you through each step, while code reused from earlier
+lessons is left uncommented so the new work stands out. Every lesson can be built into a
+bootable image and run in an emulator, or booted right in your browser on the modern site.
 </p>
 
-<ul>
-<li class="done">[x] Play a game (Rock Paper Scissors)</li>
-<li class="todo">[ ] Type commands into it, like a real terminal</li>
-<li class="todo">[ ] Show a running clock</li>
-<li class="todo">[ ] Greet you with a login screen at startup</li>
-<li class="todo">[ ] Draw real graphics on screen, so the browser has a display</li>
-<li class="todo">[ ] Open a page from the web</li>
-</ul>
+<hr size="3" color="#1b5e20">
+
+<h2><font color="#1b5e20">The goal</font></h2>
 
 <p>
-Once it can browse the web, the goals get bigger. This is where LeveretOS grows from a
-single program into something closer to a real operating system:
+The first big goal is a version of LeveretOS that can go online and open a web page. These are
+the checkpoints along the way, ticked off as we reach them:
 </p>
 
-<ul>
-<li class="todo">[ ] Log in securely, with a real password</li>
-<li class="todo">[ ] Create, open, and manage files</li>
-<li class="todo">[ ] Write and save notes in a text editor</li>
-<li class="todo">[ ] Run separate apps, instead of everything being one program</li>
-<li class="todo">[ ] Open the web browser as one of those apps</li>
-</ul>
+<table width="100%" cellpadding="4" cellspacing="0">
+<tr valign="top"><td width="30"><b><font color="#1b5e20">[x]</font></b></td><td><b>Play a game (Rock Paper Scissors)</b> &nbsp; &mdash; done</td></tr>
+<tr valign="top"><td>[ ]</td><td>Type commands into it, like a real terminal</td></tr>
+<tr valign="top"><td>[ ]</td><td>Show a running clock</td></tr>
+<tr valign="top"><td>[ ]</td><td>Greet you with a login screen at startup</td></tr>
+<tr valign="top"><td>[ ]</td><td>Draw real graphics on screen, so the browser has a display</td></tr>
+<tr valign="top"><td>[ ]</td><td>Open a page from the web</td></tr>
+</table>
 
-<hr>
+<p>
+Once it can browse the web, the goals get bigger. This is where LeveretOS grows from a single
+program into something closer to a real operating system:
+</p>
 
-<h2>Lessons so far</h2>
+<table width="100%" cellpadding="4" cellspacing="0">
+<tr valign="top"><td width="30">[ ]</td><td>Log in securely, with a real password</td></tr>
+<tr valign="top"><td>[ ]</td><td>Create, open, and manage files</td></tr>
+<tr valign="top"><td>[ ]</td><td>Write and save notes in a text editor</td></tr>
+<tr valign="top"><td>[ ]</td><td>Run separate apps, instead of everything being one program</td></tr>
+<tr valign="top"><td>[ ]</td><td>Open the web browser as one of those apps</td></tr>
+</table>
 
-<h3>Fundamentals</h3>
-<ul>
-<li><b>01. Hello World</b> &ndash; booting via GRUB and writing text straight to VGA memory.</li>
-<li><b>02. Text Output</b> &ndash; a moving cursor, putchar and print, newlines and wrapping.</li>
-<li><b>03. Text Input</b> &ndash; reading the keyboard: scancodes, getchar, read_line.</li>
-<li><b>04. Print Numbers</b> &ndash; turning integers into on-screen digits.</li>
-<li><b>05. String helpers</b> &ndash; our own helpers for strings and memory.</li>
-<li><b>06. Scrolling</b> &ndash; shifting lines up when text reaches the bottom.</li>
-<li><b>07. Rock Paper Scissors</b> &ndash; a playable terminal game, built from everything so far.</li>
-</ul>
+<hr size="3" color="#1b5e20">
 
-<h3>Talking to the Hardware</h3>
-<ul>
-<li><b>08. Restructure</b> &ndash; splitting the kernel into multiple files and headers.</li>
-<li><b>09. GDT</b> &ndash; our own segment table, so the kernel controls its own code and data.</li>
-<li><b>10. Interrupts (IDT)</b> &ndash; catching CPU exceptions with our own interrupt table.</li>
-</ul>
+<h2><font color="#1b5e20">Lessons so far</font></h2>
 
-<hr>
+<h3><font color="#33691e">Fundamentals</font></h3>
+<table width="100%" cellpadding="4" cellspacing="0" bgcolor="#f0f5ea">
+<tr valign="top"><td width="150"><b>01. Hello World</b></td><td>Booting via GRUB and writing text straight to VGA memory.</td></tr>
+<tr valign="top"><td><b>02. Text Output</b></td><td>A moving cursor, putchar and print, newlines and wrapping.</td></tr>
+<tr valign="top"><td><b>03. Text Input</b></td><td>Reading the keyboard: scancodes, getchar, read_line.</td></tr>
+<tr valign="top"><td><b>04. Print Numbers</b></td><td>Turning integers into on-screen digits.</td></tr>
+<tr valign="top"><td><b>05. String helpers</b></td><td>Our own helpers for strings and memory.</td></tr>
+<tr valign="top"><td><b>06. Scrolling</b></td><td>Shifting lines up when text reaches the bottom.</td></tr>
+<tr valign="top"><td><b>07. Rock Paper Scissors</b></td><td>A playable terminal game, built from everything so far.</td></tr>
+</table>
 
-<h2>Building it yourself</h2>
+<h3><font color="#33691e">Talking to the Hardware</font></h3>
+<table width="100%" cellpadding="4" cellspacing="0" bgcolor="#f0f5ea">
+<tr valign="top"><td width="150"><b>08. Restructure</b></td><td>Splitting the kernel into multiple files and headers.</td></tr>
+<tr valign="top"><td><b>09. GDT</b></td><td>Our own segment table, so the kernel controls its own code and data.</td></tr>
+<tr valign="top"><td><b>10. Interrupts (IDT)</b></td><td>Catching CPU exceptions with our own interrupt table.</td></tr>
+</table>
+
+<hr size="3" color="#1b5e20">
+
+<h2><font color="#1b5e20">Building it yourself</font></h2>
 
 <p>
 Each lesson folder is self-contained. It includes a build script that assembles the
-bootloader, compiles the kernel, makes a bootable ISO, and launches it in QEMU. You will
-need nasm, a 32-bit-capable g++, grub-mkrescue, xorriso, and qemu-system-i386. On Windows,
-a Linux environment such as WSL works well. If you would rather not install anything, there
-is also a Docker image that provides the whole build environment.
+bootloader, compiles the kernel, makes a bootable ISO, and launches it in QEMU. You will need
+nasm, a 32-bit-capable g++, grub-mkrescue, xorriso, and qemu-system-i386. On Windows, a Linux
+environment such as WSL works well. If you would rather not install anything, there is also a
+Docker image that provides the whole build environment. A good starting guide for the
+toolchain is <a href="https://wiki.osdev.org/Bare_Bones">OSDev Bare Bones</a>.
 </p>
+
+<hr size="3" color="#1b5e20">
 
 <p>
-A good starting guide for the toolchain is
-<a href="https://wiki.osdev.org/Bare_Bones">OSDev Bare Bones</a>.
+<b>Links:</b>
+<a href="https://github.com/Bhalodia-Om/LeveretOS">Source code on GitHub</a> &nbsp;|&nbsp;
+<a href="../">Modern version of this site</a>
 </p>
 
-<hr>
+<p><font size="2" color="#555555">Built by Om Bhalodia.</font></p>
 
-<div class="foot">
-<a href="https://github.com/Bhalodia-Om/LeveretOS">Source code on GitHub</a>
-&nbsp;&middot;&nbsp;
-<a href="../">Modern version of this site</a>
-<br><br>
-Built by Om Bhalodia.
-</div>
+</font>
 
-</div>
 </body>
 </html>
