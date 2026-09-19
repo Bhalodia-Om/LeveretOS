@@ -45,7 +45,7 @@ Once we can browse the web, the goals will get bigger. This is where LeveretOS w
 | 08 | Restructure | Split the kernel into multiple files and headers (no behaviour change) |
 | 09 | GDT | Build our own segment table so the kernel controls its own code and data (no behaviour change) |
 | 10 | Interrupts (IDT) | Catch CPU exceptions with our own interrupt table |
-| 11 | Keyboard via interrupts | The keyboard now fires interrupts instead of being polled |
+| 11 | Keyboard via interrupts | The keyboard now sends key presses, instead of constant polling |
 
 ## Building and running a lesson
 
