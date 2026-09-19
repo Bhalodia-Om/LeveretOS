@@ -1,4 +1,5 @@
 This lesson sets up interrupts. We build our own IDT (Interrupt Descriptor Table), the sibling of the GDT from lesson 9. Where the GDT told the CPU how memory is split, the IDT tells the CPU what to do when an interruption happens.
+An interuption can range from internal CPU exceptions to hardware requests and software instructions.
 
 Right now the OS polls the keyboard (a loop that constantly asks "any key yet?"). Interrupts flip that around: the hardware tells the CPU when something happens, the CPU runs a handler to handle the interrupt. 
 This lesson sets us up for the next lesson, where the keyboard actually moves onto interrupts.
