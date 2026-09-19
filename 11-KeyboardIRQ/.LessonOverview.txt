@@ -1,0 +1,22 @@
+This lesson moves the keyboard from polling to interrupts. Until now, reading a key meant sitting in a loop constantly asking the hardware "is a key ready yet?".
+Now the keyboard tells the CPU when a key is pressed: the CPU pauses, the handler grabs the key, then it resumes. This is how real operating systems handle input, and it is why we built the IDT last lesson.
+
+To get there we set up the PIC (Programmable Interrupt Controller), the chip that collects hardware interrupts and forwards them to the CPU. 
+By default its interrupts overlap with the CPU exception numbers (0-31) from lesson 10, so we change it to use 32-47 instead. The keyboard is IRQ1, which after the remap becomes interrupt 33.
+
+New concepts:
+- The PIC (master + slave 8259 chips), and why its default interrupt numbers collide with our exceptions.
+- Remapping the PIC with the standard ICW init sequence (moving IRQs to 32-47).
+- Hardware interrupts (IRQs) vs CPU exceptions: same IDT, different source.
+- End Of Interrupt (EOI): telling the PIC we're done, or it stops sending more.
+- Enabling interrupts with sti, and masking (which IRQs the PIC is allowed to raise).
+
+Files changed / added:
+- pic.h / pic.cpp   (new: remap the PIC, and send EOI)
+- idt_stubs.s       (add a stub for IRQ1 = interrupt 33)
+- idt.cpp           (register the IRQ1 handler, add the C++ keyboard interrupt handler, enable interrupts)
+- kernel.cpp        (remap the PIC, drop the old polling loop, idle while interrupts drive input)
+
+WARNING: forgetting the EOI makes the keyboard work exactly once, then go silent.
+A wrong remap value can send keypresses to the wrong handler or triple-fault.
+Success = typing shows up on screen with no polling loop.

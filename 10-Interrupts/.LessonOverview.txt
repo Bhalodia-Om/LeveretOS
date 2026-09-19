@@ -7,7 +7,7 @@ This lesson sets us up for the next lesson, where the keyboard actually moves on
 We prove the IDT works by handling CPU exceptions (interrupts 0-31, the errors the CPU raises itself, like divide-by-zero). Instead of the machine faulting and rebooting on an error, our handler catches it and prints which exception fired.
 
 New concepts:
-- What an interrupt is, and the difference between a CPU exception (0-31) and a hardware IRQ (later).
+- What an interrupt is, and the difference between a CPU exception (0-31) and a hardware IRQ, or Interrupt Request (later).
 - The IDT: 256 slots, each holding the address of a handler + some flags.
 - Assembly stubs: small routines the CPU uses when an interrupt fires, which then call our C++ handler. We need this because the CPU enters an interrupt in a special way that plain C++ can't set up.
 - outb (write a byte to a port), added to io.h alongside inb.
