@@ -21,3 +21,5 @@ extern "C" void kernel_main() {
 
     shell_run();            // hand control to the shell, which never returns
 }
+// NOTE: The time may be incorrect, as it is configured to UTC time. A fun challenge would be adding a configurable offset for the clock! 
+// Or you could move to Iceland
