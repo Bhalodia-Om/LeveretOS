@@ -20,20 +20,15 @@
 <font face="Georgia, Times New Roman, serif" size="3">
 
 <p>
-Welcome. LeveretOS is a small operating system written completely from scratch in C++.
-There is no Linux, no Windows, nothing underneath it, just our own code running directly on
-the machine, starting from the very first instruction at boot. It is built as a series of
-lessons: each one adds a single new feature on top of the last, and every new piece of code
-is commented for beginners. The whole project can be read like a step-by-step guide to how
-an operating system actually works, from a blank screen all the way toward connecting to the web.
+LeveretOS is a small operating system built from scratch in C++. It is built as a series of
+lessons, where each one adds one new feature on top of the last. New code is commented for
+beginners, so the project can double as a step-by-step guide to how an OS works.
 </p>
 
 <table width="100%" cellpadding="6" cellspacing="0" bgcolor="#c8e6c9"><tr><td>
 <font face="Georgia, serif" size="2">
-<b>Note:</b> you are viewing the <b>classic-web version</b> of this site. It is plain HTML with
-no JavaScript, made to be light and fast and readable on almost anything, including the little
-browser that LeveretOS is being built to have one day. The modern version, with a live
-in-browser emulator for every lesson, is linked at the bottom of the page.
+<b>Note:</b> this is the classic-web version of the site. It is plain HTML with no JavaScript.
+The modern version, with an in-browser emulator for every lesson, is linked at the bottom.
 </font>
 </td></tr></table>
 
@@ -45,15 +40,8 @@ in-browser emulator for every lesson, is linked at the bottom of the page.
 
 <p>
 A leveret is a baby hare, small, quick, and one of the fastest-growing young animals around.
-It felt like the right mascot for an operating system that started as almost nothing and
-grows a little better with every lesson.
-</p>
-
-<p>
-The project started with nothing but a boot message on a black screen. Lesson by lesson it
-has learned to move a cursor, read the keyboard, print numbers, scroll like a real terminal,
-play a game, and, most recently, take control of the processor's memory segments and interrupts.
-Like the animal it is named after, it is small and quick, and it is growing fast.
+It felt like the right mascot for an OS that started as almost nothing and grows a little
+better with every lesson.
 </p>
 
 <br clear="all">
@@ -64,9 +52,8 @@ Like the animal it is named after, it is small and quick, and it is growing fast
 
 <p>
 Each lesson has its own numbered folder and adds one new feature on top of the last. New or
-changed code carries comments to walk you through each step, while code reused from earlier
-lessons is left uncommented so the new work stands out. Every lesson can be built into a
-bootable image and run in an emulator, or booted right in your browser on the modern site.
+changed code has comments to guide you through each step. Reused code is left uncommented, so
+the new work stands out.
 </p>
 
 <hr size="3" color="#1b5e20">
@@ -127,12 +114,11 @@ program into something closer to a real operating system:
 <h2><font color="#1b5e20">Building it yourself</font></h2>
 
 <p>
-Each lesson folder is self-contained. It includes a build script that assembles the
+Each lesson folder is self-contained and includes a build script that assembles the
 bootloader, compiles the kernel, makes a bootable ISO, and launches it in QEMU. You will need
-nasm, a 32-bit-capable g++, grub-mkrescue, xorriso, and qemu-system-i386. On Windows, a Linux
-environment such as WSL works well. If you would rather not install anything, there is also a
-Docker image that provides the whole build environment. A good starting guide for the
-toolchain is <a href="https://wiki.osdev.org/Bare_Bones">OSDev Bare Bones</a>.
+nasm, a 32-bit-capable g++, grub-mkrescue, xorriso, and qemu-system-i386 (on Windows, a Linux
+environment such as WSL works well). There is also a Docker image with the build environment.
+A good guide for the toolchain is <a href="https://wiki.osdev.org/Bare_Bones">OSDev Bare Bones</a>.
 </p>
 
 <hr size="3" color="#1b5e20">
