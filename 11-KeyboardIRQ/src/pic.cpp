@@ -36,7 +36,7 @@ void pic_remap() {
 
     // After initialization, the data ports hold the interrupt mask, or what information is allowed to be passed. Each 1-bit disables that IRQ.
     // We currently don't have a handler for the timer (IRQ0). If the timer were unmasked it would fire into an empty IDT slot and fault. 
-    // So we mask everything except IRQ1. 0xFD = 1111 1101 (only bit 1, the keyboard, is 0 = allowed), 0xFF = 1111 1111
+    // So we mask everything except IRQ1. 0xFD = 1111 1101 (only bit 1, the keyboard, is 0 = allowed), 0xFF = 1111 1111.
     outb(PIC1_DATA, 0xFD);   // master: only IRQ1 (keyboard) allowed
     outb(PIC2_DATA, 0xFF);   // slave: all masked
 }
