@@ -10,6 +10,16 @@ A leveret is a baby hare, small, quick, and one of the fastest-growing young ani
 
 Each lesson will have its own folder, and will add one new feature on top of the last. New or changed code will contain comments to guide you through each step. Note that reused code will be left without educative comments to improve simplicity.
 
+## How to follow each lesson
+
+Each lesson folder is a copy of the one before, with the addition of one new feature. It is unnecessary to reread every file each lesson. A few files change per lesson, and you can see them in the following ways:
+
+- Every lesson folder has a `.LessonOverview.txt`, which explains what the lesson adds and lists which files were added or changed.
+- Inside those files, the new or changed code is marked with educational comments. Search a file for "new" to see new code. Note that minor changes may not be marked. Reused code from earlier lessons is usually left without educational comments, allowing the new code to be easily visible.
+- To see all changes at the same time, you can compare the lesson folder with the previous one. With git, run `git diff --no-index 12-Shell/src 13-Timer/src` (swap in the two folders). New lines are shown in green and removed lines in red. You can also browse the code on [GitHub](https://github.com/Bhalodia-Om/LeveretOS).
+
+When studying lessons, the recommended way is: read the overview, open the changed files, look for the new-code comments, and compare the differences with `git diff`.
+
 ## Goals
 
 The first big goal is a LeveretOS that can go online and open a web page. These are the checkpoints we have set to reach our goal.
