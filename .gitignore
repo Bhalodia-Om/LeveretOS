@@ -6,14 +6,14 @@ build/
 Thumbs.db
 *.swp
 
-# Private planning notes - not part of the public lesson series
+# Private planning notes
 ROADMAP.private.md
 
-# Private video scripts - not part of the public repo
+# Private video scripts for insta.
 VIDEO-SCRIPTS.private.md
 
-# Private "how to add a lesson" checklist - not part of the public site
+# Private "how to add a lesson" checklist for pushing to the site so I don't forget anything.
 docs/ADDING-A-LESSON.private.md
 
-# Private session handoff context - not part of the public repo
-SESSION-CONTEXT.private.md
+# Private lesson log for coming beginners guide
+BUG-LOG.private.md

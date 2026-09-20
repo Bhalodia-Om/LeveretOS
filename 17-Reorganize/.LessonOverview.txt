@@ -1,0 +1,22 @@
+This lesson reorganizes the source files into browsers, letting us organize files much better. Personally would NOT want to find a file in 40 others.
+
+The new layout (inside src/):
+- boot.s, kernel.cpp   stay at the top (the entry points).
+- cpu/       gdt, idt, pic, io          (low-level CPU + hardware ports)
+- drivers/   vga, keyboard, timer, rtc  (device drivers)
+- mem/       pmm, paging, heap          (memory management)
+- lib/       string, multiboot          (helpers / shared headers)
+- shell/     shell                      (the command shell)
+
+Needed changes:
+- The build script used to glob src/*.s and src/*.cpp, which only looks one level deep. Now we use find so files inside folders are also checked.
+- Rather then change all the #include lines, we give the compier -I search paths. This will give a directory of other folders to check. This way we need less changes.
+
+New concepts:
+- Organizing a growing codebase by subsystem.
+- Recursive source discovery in the build (find instead of a shallow glob).
+- Compiler include paths (-I).
+
+Files changed / added:
+- src/                      all files moved into cpu/ drivers/ mem/ lib/ shell/. boot.s and kernel.cpp stay at the top. There are no changes to content.
+- build.sh / build-iso.sh   recurse with find, adding -I include paths.

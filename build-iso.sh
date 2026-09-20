@@ -11,11 +11,13 @@ iso="build/LeveretOS-${lesson}.iso"
 
 CXXFLAGS="-m32 -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pie -nostdlib -Wall -Wextra"
 
+INCLUDES="-Isrc -Isrc/cpu -Isrc/drivers -Isrc/mem -Isrc/lib -Isrc/shell"  # Folders to include.
+
 echo "[1/4] Assembling every src/*.s..."
 # Loop over all the .s files. Lesson 9 added gdt_flush.s alongside boot.s, so we can't just assemble boot.s anymore.
 mkdir -p build
 OBJS=""
-for asm in src/*.s; do
+for asm in $(find src -name '*.s'); do      # Add the find instead of straight reference.
     obj="build/$(basename "${asm%.s}").o"
     echo "    $asm -> $obj"
     nasm -f elf32 "$asm" -o "$obj"
@@ -24,10 +26,10 @@ done
 
 echo "[2/4] Compiling every src/*.cpp..."
 # Same idea for the C++ files: grab them all, since lesson 8 we've had more than one.
-for cpp in src/*.cpp; do
+for cpp in $(find src -name '*.cpp'); do
     obj="build/$(basename "${cpp%.cpp}").o"
     echo "    $cpp -> $obj"
-    g++ $CXXFLAGS -c "$cpp" -o "$obj"
+    g++ $CXXFLAGS $INCLUDES -c "$cpp" -o "$obj"
     OBJS="$OBJS $obj"
 done
 
