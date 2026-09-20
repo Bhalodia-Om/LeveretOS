@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="../../favicon.svg" />
-  <title>LeveretOS, Lesson 14: Physical Memory</title>
-  <meta name="description" content="LeveretOS, Lesson 14: Memory Manager. A physical memory manager that tracks free and used RAM, with a mem command." />
+  <title>LeveretOS, Lesson 15: Paging</title>
+  <meta name="description" content="LeveretOS, Lesson 15: Paging. Turning on virtual memory with our own page tables. Groundwork for memory protection." />
   <style>
     :root {
       --bg: #0d1117; --panel: #161b22; --border: #30363d;
@@ -56,27 +56,31 @@
   <div class="wrap">
     <a class="back" href="../../">&larr; LeveretOS home</a>
 
-    <h1><span class="num">14</span> &middot; Physical Memory</h1>
-    <p class="sub">Track which chunks of RAM are free or used, with a mem command in the shell.</p>
+    <h1><span class="num">15</span> &middot; Paging</h1>
+    <p class="sub">Turn on the CPU memory-translation system using our page tables.</p>
 
     <h2>What this lesson adds</h2>
     <p>
-      This lesson we added a physical memory manager. We read the memory map GRUB gives us to
-      learn how much RAM the machine has and which parts are usable. We then track every 4 KB chunk
-      of RAM as free or used. We can then hand out free chunks of RAM, and take it back after. This
-      also protects the kernel's memory so it is never used by other systems. A mem command prints
-      out how much RAM is usable, used, and free. We will need this for paging and a memory
-      allocator in the next few lessons.
+      This lesson will turn on paging, which is the CPU's memory-translation system. From now on
+      the memory addresses our code uses are virtual, and the CPU translates each one to the real
+      RAM address. This lets us control what code can access, and is useful for protecting kernel
+      code when there are other applications running. The first 4 MB are saved for the kernel, and
+      keep the same virtual address as the physical address. There is no visible change, and this
+      is a foundation for memory protection and a memory allocator later.
     </p>
 
+    <div class="warn-box">
+      <strong>Heads up:</strong> this looks identical to the last lesson. This lesson created a foundation for the future lessons.
+    </div>
+
     <h2>Boot it in your browser</h2>
-    <p>Run the LeveretOS lesson-14 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
+    <p>Run the LeveretOS lesson-15 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
 
     <div class="emu-wrap">
-      <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 14)</button>
+      <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 15)</button>
       <div class="status" id="status"></div>
-      <div class="interactive" id="note-desktop">This lesson is interactive, <strong>click inside the screen</strong>, type "mem", then press Enter.</div>
-      <div class="interactive" id="note-touch" style="display:none">This lesson is interactive, tap <strong>Tap to type</strong> below, type "mem", then press Enter.</div>
+      <div class="interactive" id="note-desktop">This lesson is interactive, <strong>click inside the screen</strong> and use the shell.</div>
+      <div class="interactive" id="note-touch" style="display:none">This lesson is interactive, tap <strong>Tap to type</strong> below and use the shell.</div>
       <div id="screen_container">
         <div></div>
         <canvas style="display:none"></canvas>
@@ -87,8 +91,8 @@
     </div>
 
     <div class="nav">
-      <a href="../13/">&larr; Timer &amp; Clock</a>
-      <a href="../15/">Paging &rarr;</a>
+      <a href="../14/">&larr; Physical Memory</a>
+      <span></span>
     </div>
   </div>
 
@@ -134,7 +138,7 @@
         screen_container: document.getElementById("screen_container"),
         bios:     { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/seabios.bin" },
         vga_bios: { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/vgabios.bin" },
-        cdrom:    { url: "LeveretOS-PhysicalMemory.iso" },
+        cdrom:    { url: "LeveretOS-Paging.iso" },
         autostart: true,
       });
       emulator.add_listener("emulator-ready", function () { status.textContent = "Booting…"; });

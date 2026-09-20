@@ -1,0 +1,23 @@
+This lesson turns on paging (virtual memory), the CPU's address-translation system. It is the hardest single lesson so far! -Insert motivational quote-
+
+Until now, an address our code uses (like 0xB8000) is a physical RAM address. Paging inserts a layer between our code, which will use virtual addresses, and the CPU, which translates each one to a physical address.
+                                                                              
+How translation works (32-bit, two levels):
+- First a virtual address is split into 3 parts. The top 10 bits are the index into the page directory. The middle 10 bits index into a page table. The bottom 12 bits are offset inside the 4 KB page.
+- A Page Directory is 1024 entries, with each one poitning to a Page Table, also 1024 entries, with each poitning to a 4 KB physical frame. One page table covers 4 MB, while the directory covers the full 4 GB.
+- Each entries top 20 bits are the physical address, and the low bits are flags. We use present (bit 0) + writable (bit 1) = 0x3.
+
+The Critical Safety Step, IDENTITY MAPPING:
+- The second paging is turned on, the CPU translates every address, including ones holding instructions. If the page with our running code is translated, the CPU can't find its next instruction.
+- We first indentity map critical memory to its same physical address, then turn on paging.
+
+New concepts:
+- Page directory + page tables built from frames we get from the PMM (alloc_frame, lesson 14).
+- Loading the directory into cr3 and setting the paging bit in cr0.
+- Page faults: CPU exception 14, with the faulting address in cr2. We will add a handler.
+- Present/writable flags on page entries.
+
+Files changed / added:
+- paging.h / paging.cpp  (new: build the directory + tables, identity-map, load cr3, enable paging)
+- idt.cpp                (add interrupt 14 = page fault to the dispatcher; read cr2, print, halt)
+- kernel.cpp             (call paging_init() after pmm_init())

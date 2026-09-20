@@ -60,6 +60,7 @@ Once we can browse the web, the goals will get bigger. This is where LeveretOS w
 | 13 | Timer & Clock | A timer, and a clock command which shows the real time |
 | **Managing Memory** | | |
 | 14 | Physical Memory | Create a physical memory manager, and check RAM usage with a command |
+| 15 | Paging | Turn on paging, or virtual memory, using page tables instead of physical addresses |
 
 ## Building and running a lesson
 
