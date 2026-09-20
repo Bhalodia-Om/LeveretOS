@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="../../favicon.svg" />
-  <title>LeveretOS, Lesson 13: Timer & Clock</title>
-  <meta name="description" content="LeveretOS, Lesson 13: Clock and Timer. A clock command that reads the real time from the RTC." />
+  <title>LeveretOS, Lesson 14: Physical Memory</title>
+  <meta name="description" content="LeveretOS, Lesson 14: Memory Manager. A physical memory manager that tracks free and used RAM, with a mem command." />
   <style>
     :root {
       --bg: #0d1117; --panel: #161b22; --border: #30363d;
@@ -56,25 +56,27 @@
   <div class="wrap">
     <a class="back" href="../../">&larr; LeveretOS home</a>
 
-    <h1><span class="num">13</span> &middot; Timer &amp; Clock</h1>
-    <p class="sub">A clock command that shows the time.</p>
+    <h1><span class="num">14</span> &middot; Physical Memory</h1>
+    <p class="sub">Track which chunks of RAM are free or used, with a mem command in the shell.</p>
 
     <h2>What this lesson adds</h2>
     <p>
-      This lesson allows LeveretOS to know the time. We set up the PIT, a chip which fires
-      steady interrupts as ticks. We also set up the RTC, a battery-powered chip that has the
-      real date and time. We also add a clock command to the shell, allowing the user to type
-      "clock" into the shell and get the current time.
+      This lesson we added a physical memory manager. We read the memory map GRUB gives us to
+      learn how much RAM the machine has and which parts are usable. We then track every 4 KB chunk
+      of RAM as free or used. We can then hand out free chunks of RAM, and take it back after. This
+      also protects the kernel's memory so it is never used by other systems. A mem command prints
+      out how much RAM is usable, used, and free. We will need this for paging and a memory
+      allocator in the next few lessons.
     </p>
 
     <h2>Boot it in your browser</h2>
-    <p>Run the LeveretOS lesson-13 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
+    <p>Run the LeveretOS lesson-14 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
 
     <div class="emu-wrap">
-      <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 13)</button>
+      <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 14)</button>
       <div class="status" id="status"></div>
-      <div class="interactive" id="note-desktop">This lesson is interactive: <strong>click inside the screen</strong>, type clock, then press Enter.</div>
-      <div class="interactive" id="note-touch" style="display:none">This lesson is interactive: tap <strong>Tap to type</strong> below, type clock, then press Enter.</div>
+      <div class="interactive" id="note-desktop">This lesson is interactive, <strong>click inside the screen</strong>, type "mem", then press Enter.</div>
+      <div class="interactive" id="note-touch" style="display:none">This lesson is interactive, tap <strong>Tap to type</strong> below, type "mem", then press Enter.</div>
       <div id="screen_container">
         <div></div>
         <canvas style="display:none"></canvas>
@@ -85,8 +87,8 @@
     </div>
 
     <div class="nav">
-      <a href="../12/">&larr; Shell</a>
-      <a href="../14/">Physical Memory &rarr;</a>
+      <a href="../13/">&larr; Timer &amp; Clock</a>
+      <span></span>
     </div>
   </div>
 
@@ -132,7 +134,7 @@
         screen_container: document.getElementById("screen_container"),
         bios:     { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/seabios.bin" },
         vga_bios: { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/vgabios.bin" },
-        cdrom:    { url: "LeveretOS-Timer.iso" },
+        cdrom:    { url: "LeveretOS-PhysicalMemory.iso" },
         autostart: true,
       });
       emulator.add_listener("emulator-ready", function () { status.textContent = "Booting…"; });

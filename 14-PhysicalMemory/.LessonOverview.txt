@@ -1,0 +1,26 @@
+This lesson adds a Physical Memory Manager (PMM): the part of the OS that tracks which chunks of RAM are free vs used, and hands them out. This is the start of the "Managing Memory" phase, and the groundwork for paging (next lesson) and later a heap (malloc/free).
+
+Until now, memory we needed was fixed at compile time (like line_buffer[128]). A real OS has to hand out memory at runtime and remember what's in use, so it never gives the same chunk to two things. The PMM is that bookkeeper.
+
+Key ideas:
+- Frames: we split RAM into equal 4096-byte (4 KB) chunks called frames. We track frames, not individual bytes. 4 KB because that's the size the CPU's paging hardware uses (next lesson).
+- The multiboot memory map: we don't know how much RAM exists or which parts are usable (some is reserved for hardware). GRUB hands us a memory map describing each region. GRUB puts a pointer to this info in the EBX register before calling us, so boot.s now passes EBX to kernel_main as an argument.
+- Bitmap: one bit per frame (1 = used, 0 = free). Compact: one bit tracks 4 KB. alloc_frame finds a free bit, sets it, returns the frame's address; free_frame clears it.
+
+New concepts:
+- Reading GRUB's multiboot info + memory map (structs in multiboot.h).
+- Passing the multiboot pointer from assembly (EBX) into kernel_main.
+- A bitmap and the bit math to set/clear/test a single frame's bit.
+- alloc_frame / free_frame, and marking reserved regions (and the kernel itself) as used.
+
+Files changed / added:
+- boot.s          (push EBX so kernel_main receives the multiboot info pointer)
+- multiboot.h     (new: structs for the multiboot info + memory-map entries)
+- pmm.h / pmm.cpp (new: the bitmap, pmm_init, alloc_frame, free_frame, counters)
+- kernel.cpp      (kernel_main takes the multiboot info; call pmm_init)
+- shell.cpp       (add a "mem" command showing free/used memory)
+
+WARNING: getting the memory map parsing or the bitmap indexing wrong can hand out RAM that's
+actually in use (including the kernel's own memory) and corrupt things. We mark reserved regions
+and the kernel as used. Success = boot to the shell, type "mem", and see a sensible free/used
+frame count; alloc_frame returns distinct addresses.

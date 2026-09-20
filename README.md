@@ -58,6 +58,8 @@ Once we can browse the web, the goals will get bigger. This is where LeveretOS w
 | 11 | Keyboard via interrupts | The keyboard now sends key presses, instead of constant polling |
 | 12 | Shell | A command prompt you can type into, with the commands help, clear, about, and echo |
 | 13 | Timer & Clock | A timer, and a clock command which shows the real time |
+| **Managing Memory** | | |
+| 14 | Physical Memory | Create a physical memory manager, and check RAM usage with a command |
 
 ## Building and running a lesson
 
