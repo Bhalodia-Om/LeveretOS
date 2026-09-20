@@ -37,8 +37,6 @@ void pmm_init(uint32_t multiboot_info_addr) {
     for (uint32_t i = 0; i < BITMAP_WORDS; i++) {
         frame_bitmap[i] = 0xFFFFFFFF;
     }
-    // Assume that the full 4 GB of frames exist as used for now. Total_frames will be the count of the ones we free below.
-    used_frames = 0;
 
     // Go through GRUB's memory map. Each entry describes one region. For usable regions, free every frame in the region.
     uint32_t offset = 0;

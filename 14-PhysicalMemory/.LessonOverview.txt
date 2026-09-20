@@ -1,3 +1,5 @@
+Welcome to Phase 3: Managing memory! We will now set up managing memory, and allowing applications outside of kernel to be allocated ram to use. There will be a difficulty spike, but I believe in you!
+
 This lesson adds a Physical Memory Manager (PMM): the part of the OS that tracks which chunks of RAM are free vs used, and hands them out. This is the start of the "Managing Memory" phase, and the groundwork for paging (next lesson) and later a heap (malloc/free).
 
 Until now, memory we needed was fixed at compile time (like line_buffer[128]). A real OS has to hand out memory at runtime and remember what's in use, so it never gives the same chunk to two things. The PMM is that bookkeeper.

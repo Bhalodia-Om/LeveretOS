@@ -31,3 +31,5 @@ WARNING: the tick counter is shared between the timer interrupt and normal code,
 volatile. The clock command redraws in place each second. 
 
 Success = boot to the shell, type "clock", see the real time ticking every second, and press a key to return to the prompt.
+
+NOTE: The time may be incorrect, as it is configured to UTC time. A fun challenge would be adding a configurable offset for the clock!
