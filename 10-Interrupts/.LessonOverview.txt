@@ -18,6 +18,3 @@ Files changed / added:
 - io.h              (add outb)
 - kernel.cpp        (call idt_init() after gdt_init(), then trigger a test exception)
 
-WARNING: a wrong IDT entry can triple-fault (instant reboot loop, without an error).
-Success = the OS boots, and triggering divide-by-zero prints our exception message
-instead of rebooting.

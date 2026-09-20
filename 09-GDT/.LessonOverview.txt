@@ -11,6 +11,3 @@ Files changed / added:
 - gdt.h / gdt.cpp   (new)
 - gdt_flush.s       (new: assembly to load the GDT and reload segments)
 - kernel.cpp        (call gdt_init() first thing)
-
-WARNING: a wrong value here causes a triple fault (instant reboot loop, no error).
-Success = the OS still boots and RPS still works, now on our GDT.

@@ -22,7 +22,3 @@ Files changed / added:
 - kernel.cpp      (kernel_main takes the multiboot info; call pmm_init)
 - shell.cpp       (add a "mem" command showing free/used memory)
 
-WARNING: getting the memory map parsing or the bitmap indexing wrong can hand out RAM that's
-actually in use (including the kernel's own memory) and corrupt things. We mark reserved regions
-and the kernel as used. Success = boot to the shell, type "mem", and see a sensible free/used
-frame count; alloc_frame returns distinct addresses.

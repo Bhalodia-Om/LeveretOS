@@ -16,7 +16,3 @@ Files changed / added:
 - idt_stubs.s       (add a stub for IRQ1 = interrupt 33)
 - idt.cpp           (register the IRQ1 handler, add the C++ keyboard interrupt handler, enable interrupts)
 - kernel.cpp        (remap the PIC, drop the old polling loop, idle while interrupts drive input)
-
-WARNING: forgetting the EOI makes the keyboard work exactly once, then go silent.
-A wrong remap value can send keypresses to the wrong handler or triple-fault.
-Success = typing shows up on screen with no polling loop.
