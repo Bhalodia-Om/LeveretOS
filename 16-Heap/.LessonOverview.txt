@@ -1,0 +1,31 @@
+So far every buffer is a fixed size chosen at compile time. When we want memory whose side is only know at runtime, like a webpage, a fixed buffer would not work. The heap gives out different sizes on demand.
+
+The prerequisites:
+- The PMM gives out full 4 KB frames. Too much when we may only want a few bytes.
+- Pagin is on, so translated addresses exist.
+
+The heap takes a large region and breaks it into the sizes that callers may need.
+
+- We will reserve a large region for the heap and lay it out as a chain of blocks. Each block contains the size, whether it is in use, and a pointer to the next block in the linked list.
+
+How malloc(n) works:
+- Walk through the linked list.
+- Take the first free block that is big enough.
+- If it is much bigger than needed, split it into the used RAM (n) and the leftover free RAM.
+- Mark the block as used and return a pinter to the bytes right after the header, aka the usable RAM.
+
+How free(ptr) works:
+- Step back to header.
+- Mark the block as free.
+- Coalesce. If the next block is free, merge both free blocks, so memory doesn't become a million blocks.
+
+New concepts:
+- Block header struct (size / free / next) stored inline before each allocation.
+- First-fit search, block splitting, forward coalescing.
+- Returning void* and casting; nullptr on out-of-memory.
+- size_t for sizes.
+
+Files changed / added:
+- heap.h / heap.cpp   (new: heap_init, malloc, free, heap_total_bytes, heap_used_bytes)
+- kernel.cpp          (call heap_init() after paging_init())
+- shell.cpp           (test commands: allocate, free, and show heap usage)

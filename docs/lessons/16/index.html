@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="../../favicon.svg" />
-  <title>LeveretOS, Lesson 15: Paging</title>
-  <meta name="description" content="LeveretOS, Lesson 15: Paging. Turning on virtual memory with our own page tables. Groundwork for memory protection." />
+  <title>LeveretOS, Lesson 16: Heap</title>
+  <meta name="description" content="LeveretOS, Lesson 16: Heap. Build a memory allocation system so LeveretOS can give out memory as needed." />
   <style>
     :root {
       --bg: #0d1117; --panel: #161b22; --border: #30363d;
@@ -56,31 +56,26 @@
   <div class="wrap">
     <a class="back" href="../../">&larr; LeveretOS home</a>
 
-    <h1><span class="num">15</span> &middot; Paging</h1>
-    <p class="sub">Turn on the CPU memory-translation system using our page tables.</p>
+    <h1><span class="num">16</span> &middot; Heap</h1>
+    <p class="sub">Build a memory allocation system so LeveretOS can give out memory as needed.</p>
 
     <h2>What this lesson adds</h2>
     <p>
-      This lesson will turn on paging, which is the CPU's memory-translation system. From now on
-      the memory addresses our code uses are virtual, and the CPU translates each one to the real
-      RAM address. This lets us control what code can access, and is useful for protecting kernel
-      code when there are other applications running. The first 4 MB are saved for the kernel, and
-      keep the same virtual address as the physical address. There is no visible change, and this
-      is a foundation for memory protection and a memory allocator later.
+      Up to now every memory buffer in the OS was a fixed size. The heap allows us to hand out
+      chunks of memory of any size while the OS is running, and also to take them back. This is
+      built on the physical memory manager and paging from the last two lessons. We chain memory
+      blocks that we then split as needed, and merge back when free. Added a new <code>heaptest</code>
+      command to test it.
     </p>
 
-    <div class="warn-box">
-      <strong>Heads up:</strong> this looks identical to the last lesson. This lesson created a foundation for the future lessons.
-    </div>
-
     <h2>Boot it in your browser</h2>
-    <p>Run the LeveretOS lesson-15 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
+    <p>Run the LeveretOS lesson-16 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
 
     <div class="emu-wrap">
-      <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 15)</button>
+      <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 16)</button>
       <div class="status" id="status"></div>
-      <div class="interactive" id="note-desktop">This lesson is interactive, <strong>click inside the screen</strong> and use the shell.</div>
-      <div class="interactive" id="note-touch" style="display:none">This lesson is interactive, tap <strong>Tap to type</strong> below and use the shell.</div>
+      <div class="interactive" id="note-desktop">This lesson is interactive, <strong>click inside the screen</strong> and use the shell. Try <code>heaptest</code>.</div>
+      <div class="interactive" id="note-touch" style="display:none">This lesson is interactive, tap <strong>Tap to type</strong> below and use the shell. Try <code>heaptest</code>.</div>
       <div id="screen_container">
         <div></div>
         <canvas style="display:none"></canvas>
@@ -91,8 +86,8 @@
     </div>
 
     <div class="nav">
-      <a href="../14/">&larr; Physical Memory</a>
-      <a href="../16/">Heap &rarr;</a>
+      <a href="../15/">&larr; Paging</a>
+      <span></span>
     </div>
   </div>
 
@@ -138,7 +133,7 @@
         screen_container: document.getElementById("screen_container"),
         bios:     { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/seabios.bin" },
         vga_bios: { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/vgabios.bin" },
-        cdrom:    { url: "LeveretOS-Paging.iso" },
+        cdrom:    { url: "LeveretOS-Heap.iso" },
         autostart: true,
       });
       emulator.add_listener("emulator-ready", function () { status.textContent = "Booting…"; });
