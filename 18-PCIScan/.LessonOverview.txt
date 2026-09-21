@@ -1,0 +1,32 @@
+The lesson marks the start of the networking phase. We scan the PCI bus to allow the OS to discover hardware devices on the machine, and to find the network card.
+What PCI is:
+- PCI is the bus (electronic path) that connects devices to the system: network card, disk, graphics, usb, etc. Each device has a block of config data called the configuration space.
+- We go through the bus and ask each location whats located there, and then print the answer.
+
+How we talk to the PCI:
+- 0xCF8 - address ports, where you write which device and which field is requested.
+- 0xCFC - data port to read the value.
+- Reading is two steps of writing the address, and reading the data.
+- PCI config reads are 32-bit, so we can't use inb/outb.
+
+How a device is addressed with a 32-bit address:
+- bus (0-255), slot (0-31), function (0-7), and register offset (0-255).
+- Layout: bit 31 = 1 (for enable). Bits 23-16 = bus, bits 15-11 = device, bits 10-8 = function, bits 7-2 = offset, 4 byte aligned, bits 1-0 = 0.
+
+What comes back (offset 0):
+- low 16 bits are the vendor ID, aka who made it, while the high 16 bits are the device ID, aka which model.
+- vendor ID 0xFFFF means there is nothing there.
+
+We are trying to get the network card. In QEMU that is an intel e1000. vendor ID is 0x8086, device ID is 0x100E
+
+New concepts:
+- PCI configuration space and the 0xCF8 / 0xCFC address and data port.
+- Packing a config address (bus/device/function/offset + enable bit).
+- Vendor/device IDs, and the 0xFFFF empty slot.
+- 32-bit port I/O (inl / outl).
+
+Files changed / added:
+- src/cpu/io.h          (add inl / outl, the 32-bit port I/O functions)
+- src/net/pci.h / pci.cpp  (new: pci_config_read helper and pci_scan that lists devices)
+- src/shell/shell.cpp   (add the "lspci" (list pci) command to run the scan)
+- build.sh / build-iso.sh  (add -Isrc/net so the new folder's headers are found)

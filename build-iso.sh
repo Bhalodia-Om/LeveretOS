@@ -11,7 +11,7 @@ iso="build/LeveretOS-${lesson}.iso"
 
 CXXFLAGS="-m32 -ffreestanding -fno-exceptions -fno-rtti -fno-stack-protector -fno-pie -nostdlib -Wall -Wextra"
 
-INCLUDES="-Isrc -Isrc/cpu -Isrc/drivers -Isrc/mem -Isrc/lib -Isrc/shell"  # Folders to include.
+INCLUDES="-Isrc -Isrc/cpu -Isrc/drivers -Isrc/mem -Isrc/lib -Isrc/shell -Isrc/net"  # Folders to include.
 
 echo "[1/4] Assembling every src/*.s..."
 # Loop over all the .s files. Lesson 9 added gdt_flush.s alongside boot.s, so we can't just assemble boot.s anymore.
