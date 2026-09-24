@@ -64,7 +64,7 @@ Once we can browse the web, the goals will get bigger. This is where LeveretOS w
 | 16 | Heap | Build a memory allocation system, allowing us to give out memory blocks of any size |
 | 17 | Reorganize | Sort source files into folders to clean up the project |
 | **Getting Online** | | |
-| 18 | PCI Scan | Scan the PCI bus to find external devices, such as the network card |
+| 18 | PCI Scan | Scan the PCI bus to find external devices, such as the network card (an NE2000) |
 
 ## Building and running a lesson
 

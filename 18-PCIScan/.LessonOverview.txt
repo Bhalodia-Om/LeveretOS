@@ -17,7 +17,7 @@ What comes back (offset 0):
 - low 16 bits are the vendor ID, aka who made it, while the high 16 bits are the device ID, aka which model.
 - vendor ID 0xFFFF means there is nothing there.
 
-We are trying to get the network card. In QEMU that is an intel e1000. vendor ID is 0x8086, device ID is 0x100E
+We are trying to get the network card. In QEMU/v86 that is a Realtek RTL8029, an NE2000-compatible card. vendor ID is 0x10EC, device ID is 0x8029
 
 New concepts:
 - PCI configuration space and the 0xCF8 / 0xCFC address and data port.

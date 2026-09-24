@@ -56,8 +56,8 @@ void pci_scan() {
             print_hex16(devid);
 
             // Call out our network card specifically, with its vendor and device id.
-            if (vendor == 0x8086 && devid == 0x100E) {
-                print("  <- network card (e1000)");
+            if (vendor == 0x10EC && devid == 0x8029) {
+                print("  <- network card (NE2000/RTL8029)");
             }
             putchar('\n');
         }
