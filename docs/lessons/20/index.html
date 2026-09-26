@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="../../favicon.svg" />
-  <title>LeveretOS, Lesson 19: Find Network Card</title>
-  <meta name="description" content="LeveretOS, Lesson 19: Find Network Card. Communicate with our NE2000 network card, and read its MAC address." />
+  <title>LeveretOS, Lesson 20: Send and Receive</title>
+  <meta name="description" content="LeveretOS, Lesson 20: Send and Receive. Send ethernet frames out of the network card." />
   <style>
     :root {
       --bg: #0d1117; --panel: #161b22; --border: #30363d;
@@ -56,25 +56,24 @@
   <div class="wrap">
     <a class="back" href="../../">&larr; LeveretOS home</a>
 
-    <h1><span class="num">19</span> &middot; Find Network Card</h1>
-    <p class="sub">Communicate with the network card and read its MAC address.</p>
+    <h1><span class="num">20</span> &middot; Send and Receive</h1>
+    <p class="sub">Send ethernet frames out of the network card.</p>
 
     <h2>What this lesson adds</h2>
     <p>
-      This is the first step of writing our network driver. We find the NE2000 card on the PCI
-      bus we set up last lesson. We get the I/O port address, reset it, and read its MAC address,
-      the built in hardware ID. Reading that shows that the card is functioning and accessible.
-      We create a nic command to see the MAC address.
+      This is the final lesson for the network driver. We finish setting up the card, then send a
+      frame through the network. We also add code to receive frames from the card's ring buffer,
+      which will be used in the next lesson. Run the "net" command to send out a test frame.
     </p>
 
     <h2>Boot it in your browser</h2>
-    <p>Run the LeveretOS lesson-19 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
+    <p>Run the LeveretOS lesson-20 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
 
     <div class="emu-wrap">
-      <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 19)</button>
+      <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 20)</button>
       <div class="status" id="status"></div>
-      <div class="interactive" id="note-desktop">This lesson is interactive, <strong>click inside the screen</strong> and use the shell. Try <code>nic</code>.</div>
-      <div class="interactive" id="note-touch" style="display:none">This lesson is interactive, tap <strong>Tap to type</strong> below and use the shell. Try <code>nic</code>.</div>
+      <div class="interactive" id="note-desktop">This lesson is interactive, <strong>click inside the screen</strong> and use the shell. Try <code>net</code>.</div>
+      <div class="interactive" id="note-touch" style="display:none">This lesson is interactive, tap <strong>Tap to type</strong> below and use the shell. Try <code>net</code>.</div>
       <div id="screen_container">
         <div></div>
         <canvas style="display:none"></canvas>
@@ -85,8 +84,8 @@
     </div>
 
     <div class="nav">
-      <a href="../18/">&larr; PCI Scan</a>
-      <a href="../20/">Send and Receive &rarr;</a>
+      <a href="../19/">&larr; Find Network Card</a>
+      <span></span>
     </div>
   </div>
 
@@ -132,7 +131,7 @@
         screen_container: document.getElementById("screen_container"),
         bios:     { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/seabios.bin" },
         vga_bios: { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/vgabios.bin" },
-        cdrom:    { url: "LeveretOS-NE2000Driver.iso" },
+        cdrom:    { url: "LeveretOS-NE2000SendReceive.iso" },
         autostart: true,
       });
       emulator.add_listener("emulator-ready", function () { status.textContent = "Booting…"; });

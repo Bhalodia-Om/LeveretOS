@@ -1,0 +1,24 @@
+This lesson is the final lesson for setting up the NE2000 driver. It will send and receive raw ethernet frames. 
+Now the OS can actually move packets in and out of the card. We will be building off the last lesson.
+
+The card's packet RAM (consisting of 256-byte pages):                                         
+- The packet memory starts at page 0x40. The transmit (TX) buffer is on that page.
+- The recieve ring (RX) is from pages 0x46 to 0x60, or PSTART to PSTOP.
+- The card will fill these as packets arrive and wrap back to the start when reaching the end (ring).
+
+What this lesson does:
+- Finish init: set the recieve ring (PSTART/PSTOP/BNRY), write our MAC into the card's page 1 address registers, set the current page, and start the card.
+- Send: remote-DMA the frame into the TX page, set the transmit page and byte count, and the transmit bit. The card will then send it.
+- Recieve: The card adds a 4-byte header (status, next page, length) to each packet in the ring. We read the header, then body, then advance the boundary (BNRY). The receive code is here, but it gets exercised for real next lesson (ARP), when something actually replies to us.
+- New "net" shell command that builds and sends a test frame. (Verified the frame really leaves the card with a packet capture.)
+
+New concepts:
+- Remote-DMA WRITE.
+- Transmit trigger, with transmit page + byte count + transmit bit.
+- Recieve ring: PSTART / PSTOP / BNRY / CURPAG and the 4-byte packet header. 
+
+
+Files changed / added:
+- src/net/ne2000.h / ne2000.cpp    (finish init, add ne2000_send and ne2000_receive)
+- src/shell/shell.cpp              (add the "net" command: build + send a test frame)
+- src/kernel.cpp                   (banner)
