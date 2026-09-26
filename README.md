@@ -65,6 +65,7 @@ Once we can browse the web, the goals will get bigger. This is where LeveretOS w
 | 17 | Reorganize | Sort source files into folders to clean up the project |
 | **Getting Online** | | |
 | 18 | PCI Scan | Scan the PCI bus to find external devices, such as the network card (an NE2000) |
+| 19 | Find Network Card | Communicate with the network card and read its MAC address |
 
 ## Building and running a lesson
 

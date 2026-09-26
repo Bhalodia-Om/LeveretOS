@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="../../favicon.svg" />
-  <title>LeveretOS, Lesson 18: PCI Scan</title>
-  <meta name="description" content="LeveretOS, Lesson 18: PCI Scan. Scan the PCI bus to find external devices, such as the network card." />
+  <title>LeveretOS, Lesson 19: Find Network Card</title>
+  <meta name="description" content="LeveretOS, Lesson 19: Find Network Card. Communicate with our NE2000 network card, and read its MAC address." />
   <style>
     :root {
       --bg: #0d1117; --panel: #161b22; --border: #30363d;
@@ -56,25 +56,25 @@
   <div class="wrap">
     <a class="back" href="../../">&larr; LeveretOS home</a>
 
-    <h1><span class="num">18</span> &middot; PCI Scan</h1>
-    <p class="sub">Scan the PCI bus to find external devices, such as the network card.</p>
+    <h1><span class="num">19</span> &middot; Find Network Card</h1>
+    <p class="sub">Communicate with the network card and read its MAC address.</p>
 
     <h2>What this lesson adds</h2>
     <p>
-      This marks the start of the networking phase. PCI connects hardware to the system. This
-      involves things like the network card, disk, or graphics. We will set up a command to
-      identify all devices on the computer with a vendor ID and a device ID. This way we can find
-      our network card, so that we can use it in the next lesson.
+      This is the first step of writing our network driver. We find the NE2000 card on the PCI
+      bus we set up last lesson. We get the I/O port address, reset it, and read its MAC address,
+      the built in hardware ID. Reading that shows that the card is functioning and accessible.
+      We create a nic command to see the MAC address.
     </p>
 
     <h2>Boot it in your browser</h2>
-    <p>Run the LeveretOS lesson-18 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
+    <p>Run the LeveretOS lesson-19 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
 
     <div class="emu-wrap">
-      <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 18)</button>
+      <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 19)</button>
       <div class="status" id="status"></div>
-      <div class="interactive" id="note-desktop">This lesson is interactive, <strong>click inside the screen</strong> and use the shell. Try <code>lspci</code>.</div>
-      <div class="interactive" id="note-touch" style="display:none">This lesson is interactive, tap <strong>Tap to type</strong> below and use the shell. Try <code>lspci</code>.</div>
+      <div class="interactive" id="note-desktop">This lesson is interactive, <strong>click inside the screen</strong> and use the shell. Try <code>nic</code>.</div>
+      <div class="interactive" id="note-touch" style="display:none">This lesson is interactive, tap <strong>Tap to type</strong> below and use the shell. Try <code>nic</code>.</div>
       <div id="screen_container">
         <div></div>
         <canvas style="display:none"></canvas>
@@ -85,8 +85,8 @@
     </div>
 
     <div class="nav">
-      <a href="../17/">&larr; Reorganize</a>
-      <a href="../19/">Find Network Card &rarr;</a>
+      <a href="../18/">&larr; PCI Scan</a>
+      <span></span>
     </div>
   </div>
 
@@ -132,7 +132,7 @@
         screen_container: document.getElementById("screen_container"),
         bios:     { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/seabios.bin" },
         vga_bios: { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/vgabios.bin" },
-        cdrom:    { url: "LeveretOS-PCIScan.iso" },
+        cdrom:    { url: "LeveretOS-NE2000Driver.iso" },
         autostart: true,
       });
       emulator.add_listener("emulator-ready", function () { status.textContent = "Booting…"; });

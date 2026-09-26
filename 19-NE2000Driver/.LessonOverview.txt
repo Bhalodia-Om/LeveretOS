@@ -1,0 +1,38 @@
+This lesson finds the network card and reads its MAC address. It is the first step of writing a driver for the NE2000 network card (a Realtek RTL8029, vendor 0x10EC device 0x8029) that we found last lesson. This is the card the in-browser emulator (v86) gives us, so the lesson stays bootable on the site. Actually sending and receiving packets comes in the next lesson. This step proves we can talk to the card at all.
+
+How we talk to the card (I/O ports):
+- The card has an I/O port address, from PCI BAR0 (config offset 0x10), and we clear the low flag bits to just have the port address.
+- All the card's registers are read or written as ports at base + offset, with inb and outb.
+- The command register (CR, offset 0x00) is our main control. It also selects which page of registers is visible, from page 0/1/2.
+
+Remote DMA (how we reach the card's memory):
+- The card has its own internal RAM (16 KB), separate from our memory.
+- To read from it we use REMOTE DMA (Direct Memory Access). We give a start address and a byte count, then read bytes through the data port, which is a window into the card's RAM.
+- We use this to read the MAC address out of the card at startup.
+
+What this lesson does:
+- Reset the card into a known state (read then write the reset register, wait for reset done).
+- Stop the card and set byte-wide DMA (DCR = 0x48, so we read one byte at a time).
+- Remote-DMA read the MAC address out of the card's PROM (its built-in ID memory).
+  On the NE2000 the 6 MAC bytes are stored doubled, so byte i is at offset i*2. We read
+  12 bytes and keep every other one.
+- Add a "nic" shell command that prints the MAC. On QEMU/v86 it reads 52:54:00:12:34:56.
+
+New concepts:
+- Port-based device control and the NE2000 register pages.
+- PCI BAR0 as an I/O port base (clear the low flag bits).
+- The card's internal RAM and remote DMA (start address + count, then read the data port).
+- Reading a device's built-in MAC address.
+
+Gotcha we hit (see BUG-LOG):
+- DCR must be 0x48 for byte-wide DMA. Setting it to 0x01 selects WORD (16-bit) DMA, which
+  scrambles the MAC when reading one byte at a time (got 52:00:34:... instead of 52:54:00:...).
+
+Sending and receiving packets (transmit + receive rings) come in the NEXT lesson. The
+detailed notes for that are kept in ROADMAP.private.md under "NE2000 TX/RX REFERENCE".
+
+Files changed / added:
+- src/net/ne2000.h / ne2000.cpp    (new: find card, read BAR0, reset, read MAC via remote DMA)
+- src/net/pci.h / pci.cpp          (add pci_find_device to locate the card by vendor/device ID)
+- src/shell/shell.cpp              (add the "nic" command to show the MAC)
+- src/kernel.cpp                   (call ne2000_init() at boot)
