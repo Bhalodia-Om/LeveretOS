@@ -67,6 +67,7 @@ Once we can browse the web, the goals will get bigger. This is where LeveretOS w
 | 18 | PCI Scan | Scan the PCI bus to find external devices, such as the network card (an NE2000) |
 | 19 | Find Network Card | Communicate with the network card and read its MAC address |
 | 20 | Send and Receive | Send ethernet frames out of the network card |
+| 21 | Ethernet and ARP | An Ethernet layer to create headers, and ARP to find a machine's MAC from its IP |
 
 ## Building and running a lesson
 

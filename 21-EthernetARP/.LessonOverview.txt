@@ -1,0 +1,35 @@
+This lesson will add an Ethernet framing layer, and will use it to do ARP (Address Resolution Protocol). This will be the first two-way conversation we will do over the network, involving a machine that isn't the one running LeveretOS.
+
+Part 1, the Ethernet layer:
+- Last lesson the "net" command manually made the frame, which doesn't scale, as every protocol would need to repeat it. Due to this we make a small helper.
+- eth_send (dest_mac, ethertype (type of protocol), payload, length): This builds a proper frame (6-byte dest MAC, 6-byte source MAC (us), 2-byte type, then the payload), and gives it to ne2000_send.
+- eth_receive(): polls ne2000_receive, and if a frame has arrived, returns the source MAC, ethertype, and a pointer to the payload.
+
+A protocol is the way that data is formatted, transmitted, received, and interpreted.
+
+Part 2, ARP (Address Resolution Protocol):
+- The problem is that to send to a machine on the network you need the MAC address, but we only likely know its IP address. ARP is a broadcast to find the MAC.
+    1. First a request / us sending data: We send a BROADCAST frame asking "who has this IP address?". We broadcast because we don't yet know which machine has it.
+    2. For a reply / we receive: The owner of the IP answers directly to us, giving their MAC.
+- An ARP packet is a fixed, 28-byte layout: First the hardware type (1 for ethernet), protocol type (IPv4 = 0x0800), address lengths (6 and 4), 
+  operation (1 = request, 2 = reply), then sender MAC, sender IP, target MAC, target IP. We bundle it into an Ethernet frame with type 0x0806 (ARP).
+
+The byte order is BIG-ENDIAN, or the most significant byte first. The 2-byte fields, like ethertype, must be written high byte first. 
+
+
+Our IP: QEMU user-net assigns us 10.0.2.15 and puts the gateway at 10.0.2.2. We will hardcode these values for now.
+This works because we aren't directly going to the internet, but going through the router as a gateway.
+
+We will add the "arp" shell command, which will send a request to the gateway, poll for a reply, and print the MAC address.
+
+New concepts:
+- A framing/helper layer over the raw driver (eth_send / eth_receive).
+- ARP: resolving an IP address to a MAC address.
+- Big-endian network byte order.
+- The first request/reply exchange 
+
+Files changed / added:
+- src/net/ethernet.h / ethernet.cpp    (new: eth_send, eth_receive)
+- src/net/arp.h / arp.cpp              (new: build request, parse reply, resolve a MAC)
+- src/shell/shell.cpp                  (add the "arp" command)
+- src/kernel.cpp                       (banner)

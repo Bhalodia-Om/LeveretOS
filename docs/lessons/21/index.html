@@ -4,8 +4,8 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <link rel="icon" type="image/svg+xml" href="../../favicon.svg" />
-  <title>LeveretOS, Lesson 20: Send and Receive</title>
-  <meta name="description" content="LeveretOS, Lesson 20: Send and Receive. Send ethernet frames out of the network card." />
+  <title>LeveretOS, Lesson 21: Ethernet and ARP</title>
+  <meta name="description" content="LeveretOS, Lesson 21: Ethernet and ARP. Bundle data into Ethernet frames, and use ARP (Address Resolution Protocol) to find the gateway (router)'s MAC address." />
   <style>
     :root {
       --bg: #0d1117; --panel: #161b22; --border: #30363d;
@@ -31,6 +31,9 @@
     .emu-wrap { margin-top: 20px; }
     .interactive { background: var(--panel); border: 1px solid var(--border); border-left: 3px solid var(--accent); border-radius: 8px; padding: 12px 16px; color: #c9d1d9; margin-top: 16px; font-size: 0.92rem; }
     .warn-box { background: rgba(210,153,34,0.08); border: 1px solid var(--warn); border-left: 3px solid var(--warn); border-radius: 8px; padding: 12px 16px; color: #e3c07b; margin-top: 20px; font-size: 0.92rem; }
+    .shot { margin-top: 16px; }
+    .shot img { max-width: 100%; border: 1px solid var(--border); border-radius: 8px; display: block; }
+    .shot .cap { color: var(--muted); font-size: 0.85rem; margin-top: 6px; }
     #screen_container { background: #000; border: 1px solid var(--border); border-radius: 8px; padding: 8px; overflow: auto; display: none; scrollbar-width: thin; scrollbar-color: #30363d #000; }
     #screen_container::-webkit-scrollbar { width: 8px; height: 8px; }
     #screen_container::-webkit-scrollbar-thumb { background: #30363d; border-radius: 8px; }
@@ -56,24 +59,39 @@
   <div class="wrap">
     <a class="back" href="../../">&larr; LeveretOS home</a>
 
-    <h1><span class="num">20</span> &middot; Send and Receive</h1>
-    <p class="sub">Send ethernet frames out of the network card.</p>
+    <h1><span class="num">21</span> &middot; Ethernet and ARP</h1>
+    <p class="sub">Add an ethernet layer to format data, then use ARP (Address Resolution Protocol) to find the gateway (router)'s MAC address.</p>
 
     <h2>What this lesson adds</h2>
     <p>
-      This is the final lesson for the network driver. We finish setting up the card, then send a
-      frame through the network. We also add code to receive frames from the card's ring buffer,
-      which will be used in the next lesson. Run the "net" command to send out a test frame.
+      We first add a small Ethernet layer so that the rest of the OS does not have to build
+      headers for frames by hand. This takes necessary information and formats it. We then add
+      ARP, the Address Resolution Protocol. To send data to a machine on the local area network
+      we need its MAC address, but we usually only know its IP. ARP broadcasts the IP, after
+      which the owner replies with its MAC. We finally have receive and send ability on the
+      network. We ask the gateway which then responds. Run the new "arp" command to see the
+      gateway's MAC.
     </p>
 
+    <h2>What it looks like</h2>
+    <p>Here is the "arp" command finding the gateway on a network.</p>
+    <div class="shot">
+      <img src="arp-demo.png" alt="The arp command resolving the gateway: 10.0.2.2 is at 52:55:0A:00:02:02" />
+      <div class="cap">The OS asks who has the IP of "10.0.2.2", and the gateway replies with its MAC address.</div>
+    </div>
+
     <h2>Boot it in your browser</h2>
-    <p>Run the LeveretOS lesson-20 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
+    <p>Run the LeveretOS lesson-21 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
+
+    <div class="warn-box">
+      <strong>Heads up:</strong> the "arp" command needs a network with a gateway for an answer. The screenshot above is from a real test, with a network connection. In the emulator there is no network yet, so the command will time out. In-browser networking will come in a later lesson.
+    </div>
 
     <div class="emu-wrap">
-      <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 20)</button>
+      <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 21)</button>
       <div class="status" id="status"></div>
-      <div class="interactive" id="note-desktop">This lesson is interactive, <strong>click inside the screen</strong> and use the shell. Try <code>net</code>.</div>
-      <div class="interactive" id="note-touch" style="display:none">This lesson is interactive, tap <strong>Tap to type</strong> below and use the shell. Try <code>net</code>.</div>
+      <div class="interactive" id="note-desktop">This lesson is interactive, <strong>click inside the screen</strong> and use the shell. Try <code>arp</code>.</div>
+      <div class="interactive" id="note-touch" style="display:none">This lesson is interactive, tap <strong>Tap to type</strong> below and use the shell. Try <code>arp</code>.</div>
       <div id="screen_container">
         <div></div>
         <canvas style="display:none"></canvas>
@@ -84,8 +102,8 @@
     </div>
 
     <div class="nav">
-      <a href="../19/">&larr; Find Network Card</a>
-      <a href="../21/">Ethernet and ARP &rarr;</a>
+      <a href="../20/">&larr; Send and Receive</a>
+      <span></span>
     </div>
   </div>
 
@@ -131,7 +149,7 @@
         screen_container: document.getElementById("screen_container"),
         bios:     { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/seabios.bin" },
         vga_bios: { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/vgabios.bin" },
-        cdrom:    { url: "LeveretOS-NE2000SendReceive.iso" },
+        cdrom:    { url: "LeveretOS-EthernetARP.iso" },
         autostart: true,
       });
       emulator.add_listener("emulator-ready", function () { status.textContent = "Booting…"; });

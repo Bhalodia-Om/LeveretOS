@@ -25,7 +25,7 @@ extern "C" void kernel_main(uint32_t multiboot_info_addr) {             // Argum
 
     ne2000_init();                   // find and set up the network card. After clear screen so not found message can show.
 
-    print("LeveretOS - Lesson 20: Send and receive over the network\n\n");
+    print("LeveretOS - Lesson 21: Ethernet and ARP\n\n");
 
     asm volatile ("sti");   
     shell_run();            // hand control to the shell, which never returns
