@@ -1,0 +1,441 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>Interrupts and the IDT, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Talking to hardware</div>
+      <h1>Interrupts and the IDT</h1>
+      <p class="lede">A mechanism for the CPU to stop what it is doing, run a function you nominated, and resume exactly where it left off. It is how the OS learns that anything happened.</p>
+
+      <h2>Two very different reasons to interrupt</h2>
+      <p>
+        Both arrive through the same table, but their causes could not be more different, and the
+        lessons handle them separately.
+      </p>
+
+      <div id="m-kinds"></div>
+
+      <p>
+        Exceptions are the CPU complaining about your code. Hardware interrupts are devices reporting
+        news. The dispatcher in <code>idt.cpp</code> tells them apart purely by number: anything below
+        32 is an exception, and the lessons put the keyboard and timer at 32 and 33.
+      </p>
+
+      <div class="box info">
+        <span class="t">Why exceptions come first</span>
+        The interrupt lesson sets up all 32 exception handlers before touching hardware interrupts at
+        all. That is deliberate. Once exceptions report themselves by name, every later mistake tells
+        you what went wrong instead of silently rebooting the machine.
+      </div>
+
+      <h2>The table the CPU consults</h2>
+      <p>
+        When an interrupt arrives, the CPU needs to know which function to run. It looks up the
+        interrupt number in a table of 256 entries, each one called a gate.
+      </p>
+
+      <div id="m-gate"></div>
+
+      <p>
+        Notice the handler's address is split in half, with the selector and flags sitting in between.
+        Same historical accident as the GDT: the 16 bit original had a smaller gate, and the extra
+        address bits were appended when addresses grew to 32 bits.
+      </p>
+
+      <div id="w-setentry"></div>
+
+      <div id="q-flags"></div>
+
+      <h2>What the CPU pushes before your handler runs</h2>
+      <p>
+        This is the part that makes interrupt handlers unusual. Before jumping to your code, the CPU
+        pushes enough information onto the stack to resume afterwards.
+      </p>
+
+      <div id="s-push"></div>
+
+      <p>
+        That frame is why a handler cannot end with an ordinary <code>ret</code>. A normal return pops
+        one address. An interrupt return has to pop three values and restore the flags register, which
+        is a different instruction entirely.
+      </p>
+
+      <div id="q-iret"></div>
+
+      <h2>The error code inconsistency</h2>
+      <p>
+        Some exceptions push an extra value describing what went wrong, and some do not. The CPU does
+        not offer a choice about this, it is fixed per exception number.
+      </p>
+
+      <div id="m-errcode"></div>
+
+      <p>
+        That inconsistency is a problem, because the common handler needs one predictable stack layout.
+        The fix is to give the no error code cases a fake one.
+      </p>
+
+      <div id="w-macros"></div>
+
+      <p>
+        Now every stub has pushed exactly the same shape regardless of which exception it came from, and
+        the shared code below can make one assumption that always holds.
+      </p>
+
+      <div class="box warn">
+        <span class="t">The seven that push an error code</span>
+        Exceptions 8, 10, 11, 12, 13, 14 and 17. There is no pattern to memorise, it is simply what the
+        architecture specifies. Getting this list wrong shifts the stack by four bytes and the handler
+        reads the wrong interrupt number.
+      </div>
+
+      <h2>Why assembly stubs exist at all</h2>
+      <p>
+        A reasonable question: why not point the IDT gate straight at a C++ function? Three reasons,
+        and each one is fatal on its own.
+      </p>
+
+      <div id="m-whystub"></div>
+
+      <p>
+        So each of the 34 gates points at a small assembly stub. The stub records which interrupt it is,
+        saves the registers, calls into C++, then undoes all of that and returns properly.
+      </p>
+
+      <h2>The shared stub, line by line</h2>
+      <p>
+        All 34 stubs jump to the same code once they have pushed their number. This is the densest
+        assembly in the project and worth going through carefully.
+      </p>
+
+      <div id="w-common"></div>
+
+      <p>
+        The <code>[esp + 32]</code> is the piece that trips people up. After <code>pusha</code> has
+        pushed eight 32 bit registers, everything that was on the stack has moved 32 bytes deeper. The
+        interrupt number the stub pushed is now exactly 32 bytes below the top.
+      </p>
+
+      <div id="s-stack"></div>
+
+      <div id="q-esp"></div>
+
+      <h2>The dispatcher in C++</h2>
+      <p>
+        Once the stub has normalised everything, the C++ side is a plain function taking one argument.
+        All the awkwardness stayed in assembly.
+      </p>
+
+      <div id="w-dispatch"></div>
+
+      <p>
+        Exceptions halt the machine deliberately. There is no meaningful recovery from a general
+        protection fault in a kernel this simple, so the handler prints what happened and stops. That
+        is far more useful than continuing with corrupt state.
+      </p>
+
+      <h2>Registering everything</h2>
+      <p>
+        <code>idt_init</code> fills 34 of the 256 slots and leaves the rest zeroed. An interrupt
+        arriving on an unregistered slot is a fault in itself, which is worth understanding because it
+        caused a real bug in the lessons.
+      </p>
+
+      <div id="w-init"></div>
+
+      <div class="box warn">
+        <span class="t">The bug this caused</span>
+        In lesson 11 the OS triple faulted at boot. The cause was the PIC being told to allow timer
+        interrupts on IRQ0 before slot 32 had a handler. The timer fired, the CPU found an empty gate,
+        raised a fault, failed to handle that too, and reset. The fix was to leave the timer masked
+        until its handler existed. Never unmask an interrupt before its gate is filled in.
+      </div>
+
+      <h2>The sti instruction</h2>
+      <p>
+        Interrupts stay disabled for the entire setup. Nothing is allowed to fire until the GDT, the
+        IDT and the PIC are all configured, and one instruction opens the gate.
+      </p>
+
+      <div id="w-sti"></div>
+
+      <p>
+        Before <code>sti</code> the CPU ignores hardware interrupts entirely. After it, a keypress can
+        arrive at any moment. Putting it last means the OS is never half configured when the first one
+        lands.
+      </p>
+
+      <div id="q-sti"></div>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("interrupts");
+
+Guide.memMap("m-kinds", {
+  title: "The two kinds, click each",
+  segments: [
+    { label: "exceptions, 0 to 31", weight: 1, addr: "raised by the CPU itself", desc: "Something went wrong executing your code. Divide by zero, invalid opcode, page fault, general protection fault. These are synchronous, caused directly by the instruction that was running. The lessons print the name and halt." },
+    { label: "hardware interrupts, 32 up", weight: 1, addr: "raised by devices", desc: "A device has news. The keyboard has a scancode, the timer has ticked. Asynchronous, arriving at moments unrelated to what the CPU was doing. The lessons handle these and resume normally." }
+  ],
+  hint: "The dispatcher tells them apart by number alone. Below 32 is a fault, 32 and 33 are the timer and keyboard."
+});
+
+Guide.memMap("m-gate", {
+  title: "Eight bytes of an IDT gate, click each field",
+  segments: [
+    { label: "offset_low", weight: 2, addr: "bytes 0 to 1", desc: "The low 16 bits of the handler function's address. Half of a 32 bit pointer, split for backward compatibility with the 16 bit original." },
+    { label: "selector", weight: 2, addr: "bytes 2 to 3", desc: "Which GDT code segment the handler runs in. Always 0x08 in the lessons, the code segment entry 1. This is the dependency that makes the GDT lesson come first." },
+    { label: "always_zero", weight: 1, addr: "byte 4", desc: "Reserved by the architecture and must be zero. The struct names it honestly rather than pretending it does something." },
+    { label: "flags", weight: 1, addr: "byte 5", desc: "0x8E in the lessons: present, ring 0, and a 32 bit interrupt gate. The type field here also decides whether interrupts stay disabled inside the handler." },
+    { label: "offset_high", weight: 2, addr: "bytes 6 to 7", desc: "The high 16 bits of the handler's address. The CPU rejoins the two halves to get the full pointer." }
+  ],
+  hint: "256 of these in a row, indexed by interrupt number. The lessons fill in 34 and leave the rest zeroed."
+});
+
+Guide.codeWalk("w-setentry", {
+  title: "Filling one gate, from idt.cpp",
+  code: "static void idt_set_entry(int i, uint32_t handler,\n                          uint16_t selector, uint8_t flags) {\n    idt[i].offset_low  = handler & 0xFFFF;\n    idt[i].offset_high = (handler >> 16) & 0xFFFF;\n    idt[i].selector    = selector;\n    idt[i].always_zero = 0;\n    idt[i].flags       = flags;\n}",
+  notes: [
+    { lines: [3, 3], text: "The low half of the handler address. Mask with 0xFFFF to keep 16 bits, no shift needed since they are already at the bottom." },
+    { lines: [4, 4], text: "Shift down 16 to bring the high half to the bottom, then mask. The same extract pattern as the GDT, just with 16 bit pieces instead of 8." },
+    { lines: [5, 5], text: "Always 0x08 from the callers, naming the GDT code segment. The handler will execute with that descriptor active." },
+    { lines: [6, 6], text: "Explicitly zeroed. The array is static so it starts zeroed anyway, but writing it makes the requirement visible." },
+    { lines: [7, 7], text: "Always 0x8E from the callers. Present, ring 0, 32 bit interrupt gate." }
+  ]
+});
+
+Guide.stepper("s-push", {
+  title: "What happens the instant an interrupt arrives",
+  steps: [
+    {
+      head: "Normal code is running",
+      text: "The OS is doing something ordinary, say printing to the screen. It has no idea anything is about to happen.",
+      state: { "running": "your code", "eip": "somewhere in print()" }
+    },
+    {
+      head: "A key is pressed",
+      text: "The keyboard controller raises IRQ1. The PIC passes it to the CPU as interrupt 33, because the lessons remapped it.",
+      state: { "interrupt": "33 pending" }
+    },
+    {
+      head: "The CPU finishes the current instruction",
+      text: "It does not stop mid instruction. The current one completes, then the interrupt is taken, which is why handlers see a consistent machine state.",
+      state: { "current instruction": "completed" }
+    },
+    {
+      head: "The CPU pushes a return frame",
+      text: "Three values go onto the stack: the flags register, the code segment, and the address to resume at. This is what makes resuming possible.",
+      code: "stack after the CPU's push:\n  [esp + 8]  eflags\n  [esp + 4]  cs\n  [esp + 0]  eip",
+      state: { "pushed": "eflags, cs, eip", "esp": "moved down 12 bytes" }
+    },
+    {
+      head: "Some exceptions push a fourth value",
+      text: "Exceptions 8, 10 to 14 and 17 add an error code describing the failure. Hardware interrupts never do, which is the inconsistency the stubs have to paper over.",
+      state: { "error code": "only for 7 specific exceptions" }
+    },
+    {
+      head: "The CPU looks up the gate and jumps",
+      text: "Interrupt 33 indexes gate 33 in the IDT, which holds the address of the irq1 stub. Execution jumps there.",
+      state: { "running": "irq1 stub in assembly" }
+    },
+    {
+      head: "The handler runs, then iret",
+      text: "iret pops eip, cs and eflags back off the stack, and the CPU resumes exactly where it was interrupted with the flags restored.",
+      code: "iret",
+      state: { "running": "your code again", "eip": "back in print()" }
+    }
+  ],
+  hint: "The interrupted code never knows it happened. Every register is restored, and even the flags are exactly as they were."
+});
+
+Guide.memMap("m-errcode", {
+  title: "Which exceptions push an error code, click each",
+  segments: [
+    { label: "no error code", weight: 5, addr: "0 to 7, 9, 15, 16, 18 to 31", desc: "The CPU pushes only eflags, cs and eip. Divide by zero, invalid opcode, breakpoint and most others. The stub has to push a fake zero so the stack layout matches the others." },
+    { label: "pushes an error code", weight: 2, addr: "8, 10, 11, 12, 13, 14, 17", desc: "The CPU adds a fourth value describing the failure. Double fault, invalid TSS, segment not present, stack fault, general protection fault, page fault, alignment check. The stub pushes nothing extra because the CPU already did." }
+  ],
+  hint: "No pattern to derive, it is simply specified. The lessons handle it with two assembly macros."
+});
+
+Guide.codeWalk("w-macros", {
+  title: "Two macros to normalise the stack, from idt_stubs.s",
+  code: "%macro ISR_NOERR 1\nglobal isr%1\nisr%1:\n    push dword 0         ; fake error code\n    push dword %1        ; the interrupt number\n    jmp isr_common\n%endmacro\n\n%macro ISR_ERR 1\nglobal isr%1\nisr%1:\n    push dword %1        ; the CPU already pushed a real error code\n    jmp isr_common\n%endmacro\n\nISR_NOERR 0\nISR_NOERR 1\n; ...\nISR_ERR   8\nISR_ERR   13\nISR_ERR   14",
+  notes: [
+    { lines: [1, 1], text: "A macro taking one parameter. The assembler expands it 32 times rather than making you write 32 nearly identical stubs by hand." },
+    { lines: [2, 3], text: "%1 is the parameter, so ISR_NOERR 14 generates a label called isr14. That is the name idt.cpp declares as extern and takes the address of." },
+    { lines: [4, 4], text: "The fake zero. This is the whole point of having two macros: it makes the stack look the same as if the CPU had pushed an error code." },
+    { lines: [5, 5], text: "Push the interrupt number so the shared code knows which exception it is handling. Without this, one common handler could not tell them apart." },
+    { lines: [12, 12], text: "The error code version pushes only the number, because the CPU already put a real error code there. Pushing another would shift the stack and break the offset calculation." },
+    { lines: [16, 21], text: "Every exception listed once with the right macro. Choosing the wrong macro for an exception misaligns the stack by four bytes." }
+  ],
+  hint: "After either macro runs, the stack looks identical. That is what lets 34 different entry points share one body."
+});
+
+Guide.memMap("m-whystub", {
+  title: "Three reasons a gate cannot point at C++, click each",
+  segments: [
+    { label: "wrong return instruction", weight: 1, addr: "ret versus iret", desc: "A C++ function ends with ret, which pops one address. An interrupt needs iret, which pops eip, cs and eflags together. Using the wrong one leaves the stack corrupt and the flags register wrong." },
+    { label: "no interrupt number", weight: 1, addr: "which one fired?", desc: "The CPU does not tell the handler which interrupt it is. With 34 gates sharing one dispatcher, something has to record the number, and only the stub knows which gate it belongs to." },
+    { label: "registers not saved", weight: 1, addr: "clobbering the interrupted code", desc: "The interrupted code was using registers. A C++ function saves only the ones its calling convention requires, and freely destroys the rest. Since the interrupted code expects everything untouched, all of them must be saved." }
+  ],
+  hint: "Each stub is four instructions and solves all three problems before C++ ever runs."
+});
+
+Guide.codeWalk("w-common", {
+  title: "The shared stub body, from idt_stubs.s",
+  code: "isr_common:\n    pusha                        ; save all 8 general purpose registers\n    mov eax, [esp + 32]          ; fetch the interrupt number\n    push eax                     ; pass it as the C++ argument\n    call interrupt_handler\n    add esp, 4                   ; drop the pushed argument\n    popa                         ; restore all 8 registers\n    add esp, 8                   ; drop the number and error code\n    iret                         ; return from the interrupt",
+  notes: [
+    { lines: [2, 2], text: "pusha pushes eax, ecx, edx, ebx, esp, ebp, esi and edi in one instruction. Eight registers at 4 bytes each is 32 bytes, which is where the offset below comes from." },
+    { lines: [3, 3], text: "The interrupt number was pushed before the jump here, so it sits 32 bytes down now that pusha has added its own 32 bytes on top." },
+    { lines: [4, 4], text: "On 32 bit x86 arguments go on the stack, so pushing eax makes the number the first parameter of interrupt_handler." },
+    { lines: [5, 5], text: "Call into C++. The function is declared extern \"C\" so the name matches exactly with no compiler decoration." },
+    { lines: [6, 6], text: "Undo the argument push. The caller cleans up in this convention, and skipping it would leave the stack four bytes off." },
+    { lines: [7, 7], text: "popa restores all eight registers in the mirror order. The interrupted code gets its machine state back untouched." },
+    { lines: [8, 8], text: "Drop the interrupt number and the error code, real or fake, that the stub pushed. Eight bytes for the two of them. Now the stack holds exactly what the CPU pushed." },
+    { lines: [9, 9], text: "iret pops eip, cs and eflags and resumes. This only works because the stack was restored to precisely the state the CPU created." }
+  ]
+});
+
+Guide.stepper("s-stack", {
+  title: "Following the stack through one interrupt",
+  steps: [
+    {
+      head: "Before anything happens",
+      text: "The stack holds whatever the interrupted code was using.",
+      state: { "esp": "baseline", "on top": "the interrupted code's data" }
+    },
+    {
+      head: "The CPU pushes its frame",
+      text: "Three values, twelve bytes. For the seven exceptions with error codes there would be a fourth here.",
+      code: "[esp + 8] eflags\n[esp + 4] cs\n[esp + 0] eip",
+      state: { "esp": "baseline minus 12" }
+    },
+    {
+      head: "The stub pushes two more",
+      text: "A fake or real error code, then the interrupt number. Eight more bytes. The number ends up on top.",
+      code: "[esp + 0] interrupt number\n[esp + 4] error code",
+      state: { "esp": "baseline minus 20", "on top": "interrupt number" }
+    },
+    {
+      head: "pusha adds 32 bytes",
+      text: "Eight registers pushed. Everything below has moved 32 bytes deeper, and the interrupt number that was at esp is now at esp plus 32.",
+      code: "pusha",
+      state: { "esp": "baseline minus 52", "interrupt number at": "[esp + 32]" }
+    },
+    {
+      head: "Read it and pass it along",
+      text: "That offset of 32 is exactly why the constant is 32. Change pusha to something that pushes a different amount and this number changes with it.",
+      code: "mov eax, [esp + 32]\npush eax\ncall interrupt_handler",
+      state: { "eax": "the interrupt number" }
+    },
+    {
+      head: "Unwind in reverse",
+      text: "Drop the argument, pop the registers, drop the stub's two values. The stack is back to exactly what the CPU created.",
+      code: "add esp, 4\npopa\nadd esp, 8",
+      state: { "esp": "baseline minus 12", "on top": "eip, ready for iret" }
+    },
+    {
+      head: "iret",
+      text: "Pops the CPU's three values and resumes. Every cleanup step had to be exact for this to work.",
+      state: { "esp": "baseline", "running": "the interrupted code" }
+    }
+  ],
+  hint: "Every push needs a matching cleanup. One missing add esp and iret reads the wrong values as a return address."
+});
+
+Guide.codeWalk("w-dispatch", {
+  title: "The C++ dispatcher, from idt.cpp",
+  code: "extern \"C\" void interrupt_handler(uint32_t interrupt_number) {\n    if (interrupt_number < 32) {\n        print(\"\\n*** CPU EXCEPTION ***\\n\");\n        print(exception_names[interrupt_number]);\n        print(\"\\nSystem halted.\\n\");\n        for (;;) { asm volatile (\"cli; hlt\"); }\n    }\n    else if (interrupt_number == 33) {\n        uint8_t scancode = inb(KEYBOARD_DATA_PORT);\n        keyboard_handle_scancode(scancode);\n        pic_send_eoi(1);\n    }\n    else if (interrupt_number == 32) {\n        timer_tick();\n        pic_send_eoi(0);\n    }\n}",
+  notes: [
+    { lines: [1, 1], text: "extern \"C\" so the assembly can find it by its plain name. The parameter arrives from the stack push in the stub." },
+    { lines: [2, 2], text: "Numbers below 32 are CPU exceptions. One comparison separates faults from device news." },
+    { lines: [4, 4], text: "A lookup into a table of 32 strings. Printing a name rather than a number is the difference between a useful message and a mystery." },
+    { lines: [6, 6], text: "Halt deliberately. cli disables interrupts, hlt stops the CPU, and the infinite loop catches the case where a non maskable interrupt resumes execution past hlt." },
+    { lines: [8, 11], text: "Interrupt 33 is the remapped keyboard IRQ1. Read the scancode from the port, which also clears it from the controller, then hand it to the driver." },
+    { lines: [11, 11], text: "Tell the PIC the interrupt is finished. Skip this and the PIC never sends another keyboard interrupt, so the keyboard appears to die after one keystroke." },
+    { lines: [13, 15], text: "Interrupt 32 is the remapped timer IRQ0. Counting a tick is all it does, deliberately, because handlers should be short." }
+  ]
+});
+
+Guide.codeWalk("w-init", {
+  title: "Registering the gates, from idt.cpp",
+  code: "extern \"C\" {\n    void isr0();  void isr1();  /* ... through isr31 */\n    void irq1();   // keyboard\n    void irq0();   // timer\n}\n\nvoid idt_init() {\n    idt_ptr.limit = sizeof(idt) - 1;\n    idt_ptr.base  = (uint32_t)&idt;\n\n    idt_set_entry(0,  (uint32_t)isr0,  0x08, 0x8E);\n    // ... all 32 exceptions ...\n    idt_set_entry(33, (uint32_t)irq1,  0x08, 0x8E);\n    idt_set_entry(32, (uint32_t)irq0,  0x08, 0x8E);\n\n    asm volatile (\"lidt %0\" : : \"m\"(idt_ptr));\n}",
+  notes: [
+    { lines: [1, 5], text: "Declaring the assembly stubs so C++ can take their addresses. extern \"C\" keeps the names undecorated so they match the labels the macros generated." },
+    { lines: [8, 9], text: "Same pointer structure idea as the GDT. Size minus one, plus the table's address. 256 gates at 8 bytes each is 2048, so the limit is 2047." },
+    { lines: [11, 11], text: "Taking a function's address gives where its code starts. The cast to uint32_t is because the gate stores a plain number, which idt_set_entry then splits in half." },
+    { lines: [13, 14], text: "The two hardware interrupts. 33 for the keyboard and 32 for the timer, matching the PIC remap. These numbers must agree with what the stubs push and what the dispatcher checks." },
+    { lines: [16, 16], text: "lidt loads the table. The \"m\" constraint means the operand is in memory, which is what lidt needs. After this the CPU consults our gates." },
+    { lines: [11, 14], text: "The other 222 slots stay zeroed. An interrupt on one of those is itself a fault, which is what caused the lesson 11 triple fault when the timer fired before slot 32 existed." }
+  ]
+});
+
+Guide.codeWalk("w-sti", {
+  title: "Opening the gate, from kernel.cpp",
+  code: "gdt_init();      // segments first, gates need a code selector\nidt_init();      // then the interrupt table\npic_remap();     // then move the IRQs off the exception numbers\ntimer_init(100); // configure the timer chip\npmm_init(multiboot_info_addr);\npaging_init();\nheap_init();\nne2000_init();\n\ntext_color = make_color(VGA_WHITE, VGA_BLACK);\nclear_screen();\nprint(\"LeveretOS\\n\\n\");\n\nasm volatile (\"sti\");   // NOW allow interrupts\nshell_run();",
+  notes: [
+    { lines: [1, 1], text: "The GDT comes first because every IDT gate names a code selector from it." },
+    { lines: [2, 2], text: "The IDT next, so gates exist before anything can be unmasked." },
+    { lines: [3, 3], text: "The PIC remap moves hardware IRQs from 0 to 15 up to 32 to 47, away from the exception numbers. It also sets the mask that decides which are allowed." },
+    { lines: [14, 14], text: "sti sets the interrupt enable flag. Before this line the CPU ignores every hardware interrupt no matter what the PIC does." },
+    { lines: [14, 14], text: "Last, on purpose. Everything is configured by now, so the first keypress cannot arrive while a driver is half initialised." },
+    { lines: [15, 15], text: "The shell loops forever, sleeping in read_line. From here the OS only wakes on interrupts." }
+  ]
+});
+
+Guide.quiz("q-flags", {
+  question: "Every gate in the lessons uses flags 0x8E. What does bit 7 of that do?",
+  options: [
+    { text: "Marks the gate present, so the CPU treats it as valid", correct: true, why: "Right. 0x8E is 1000 1110, and bit 7 is the present bit. Clear it and the CPU treats the gate as unfilled, raising a fault when that interrupt arrives. The remaining bits set ring 0 and select a 32 bit interrupt gate." },
+    { text: "Selects a 32 bit gate rather than 16 bit", why: "That is in the type field, bits 3 to 0, which is the E part of 0x8E. Bit 7 is present." },
+    { text: "Allows user mode code to trigger the interrupt", why: "That would be the privilege bits, 6 and 5, which are clear here meaning ring 0 only." },
+    { text: "Enables interrupts while the handler runs", why: "The gate type controls that, and an interrupt gate keeps them disabled. Bit 7 is unrelated." }
+  ]
+});
+
+Guide.quiz("q-iret", {
+  question: "A handler ends with ret instead of iret. What goes wrong?",
+  options: [
+    { text: "It pops only one value, so the stack is left misaligned and execution jumps somewhere wrong", correct: true, why: "Correct. The CPU pushed eflags, cs and eip. ret pops a single value as a return address and leaves the other two on the stack. The flags register is never restored either, so interrupt state and comparison results are wrong afterwards." },
+    { text: "Nothing, since ret and iret both return", why: "They pop different amounts. iret exists specifically because an interrupt frame is three values plus the flags register." },
+    { text: "The handler runs twice", why: "It would not run again. The damage is a corrupt stack and a jump to whatever value happened to be on top." },
+    { text: "The compiler rejects it", why: "This is hand written assembly, so nothing checks it. The failure appears at runtime as unpredictable behaviour." }
+  ]
+});
+
+Guide.quiz("q-esp", {
+  question: "Why is the interrupt number read from [esp + 32] and not [esp]?",
+  options: [
+    { text: "pusha pushed eight 4 byte registers first, moving everything 32 bytes deeper", correct: true, why: "Right. The stub pushed the number, then pusha added 32 bytes on top of it. So the number that was at the top is now 32 bytes down. Change what pusha saves and this offset changes too." },
+    { text: "The CPU always puts the interrupt number at that offset", why: "The CPU never pushes the interrupt number at all. That is exactly why the stubs push it themselves." },
+    { text: "32 is the first hardware interrupt number, so it is used as the offset", why: "Coincidence of numbers. This 32 is a byte count from eight 4 byte registers, unrelated to the interrupt numbering." },
+    { text: "Because the error code sits at [esp] instead", why: "The error code was pushed before the number, so it is even deeper, at [esp + 36] after pusha." }
+  ]
+});
+
+Guide.quiz("q-sti", {
+  question: "Why is sti the last thing before the shell starts?",
+  options: [
+    { text: "So no interrupt can arrive while the GDT, IDT, PIC or drivers are half configured", correct: true, why: "Correct. Until sti runs the CPU ignores hardware interrupts entirely. That gives the setup code a guaranteed quiet period. Enabling early would let a keypress arrive before the keyboard driver or its gate existed." },
+    { text: "Because sti also starts the timer counting", why: "The timer chip was configured by timer_init and counts regardless. sti only controls whether the CPU listens to interrupt requests." },
+    { text: "Because the shell needs interrupts and nothing before it does", why: "True but incidental. The real reason is safety during setup, not a requirement of the shell." },
+    { text: "Because sti must come after lidt or the CPU faults", why: "No such ordering rule exists in the hardware. The ordering is a deliberate choice to avoid unhandled interrupts." }
+  ]
+});
+</script>
+</body>
+</html>

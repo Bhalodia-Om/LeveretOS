@@ -1,0 +1,521 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>ARP, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Getting online</div>
+      <h1>ARP</h1>
+      <p class="lede">You know a machine's IP address but the network card only understands MAC addresses. ARP is how you ask the network to fill in the gap, and it is the OS's first real conversation with another machine.</p>
+
+      <h2>The gap ARP closes</h2>
+      <p>
+        Two kinds of address, at two different layers, and neither can be derived from the other.
+      </p>
+
+      <div id="m-gap"></div>
+
+      <p>
+        To send anything you need the destination MAC for the Ethernet header. To decide where you are
+        sending you use an IP address. So there is a lookup missing in the middle, and ARP performs it.
+      </p>
+
+      <div class="box info">
+        <span class="t">Why it cannot be calculated</span>
+        A MAC is assigned by whoever made the card. An IP is assigned by whoever runs the network. There is
+        no relationship between them, so the only way to learn the pairing is to ask.
+      </div>
+
+      <h2>Two messages</h2>
+      <p>
+        The whole protocol is a question and an answer. No connection, no handshake, no state.
+      </p>
+
+      <div id="s-exchange"></div>
+
+      <p>
+        The request has to be broadcast because you do not yet know who to send it to. That is the problem
+        you are trying to solve, so the only option is to ask everybody.
+      </p>
+
+      <div id="q-broadcast"></div>
+
+      <h2>ARP is local only</h2>
+      <p>
+        An important limit. ARP cannot reach beyond your own network segment, and that is by design rather
+        than a shortcoming.
+      </p>
+
+      <div id="m-local"></div>
+
+      <p>
+        So how does anything reach the internet? You do not ARP for the distant server. You ARP for your
+        gateway, then send everything destined elsewhere to the gateway's MAC and let it forward onward.
+      </p>
+
+      <div id="s-gateway"></div>
+
+      <div id="q-local"></div>
+
+      <h2>The packet</h2>
+      <p>
+        Twenty eight bytes with a fixed layout. Every field has a fixed offset, which makes building and
+        parsing it straightforward once you have the map.
+      </p>
+
+      <div id="m-packet"></div>
+
+      <p>
+        The first four fields are almost always the same values, describing Ethernet and IPv4. They exist
+        because ARP was designed to work over other kinds of network too, so it declares what sort of
+        addresses it is talking about.
+      </p>
+
+      <div id="w-constants"></div>
+
+      <h2>Building a request</h2>
+      <p>
+        Filling in the 28 bytes, with every multi byte field written high byte first.
+      </p>
+
+      <div id="w-build"></div>
+
+      <div id="q-target"></div>
+
+      <h2>The one field that is left blank</h2>
+      <p>
+        Bytes 18 to 23 are the target MAC, and in a request they are all zero. That is not an oversight, it
+        is the question itself.
+      </p>
+
+      <div id="m-blank"></div>
+
+      <p>
+        The reply comes back with the same structure but that blank filled in, and with the sender and
+        target roles swapped. So the answer arrives in the sender MAC field of the reply.
+      </p>
+
+      <h2>The real request, byte by byte</h2>
+      <p>
+        These are genuine bytes captured leaving the card during the lesson. Forty two bytes: the fourteen
+        byte Ethernet header plus the twenty eight byte ARP packet.
+      </p>
+
+      <div id="h-request"></div>
+
+      <h2>And the reply</h2>
+      <p>
+        QEMU's virtual gateway answered. Notice what changed and what stayed the same.
+      </p>
+
+      <div id="h-reply"></div>
+
+      <p>
+        The destination is now our MAC rather than broadcast, because the gateway knows exactly who asked.
+        The operation is 2 instead of 1. And the sender and target fields have swapped roles, so the answer
+        we wanted sits in the sender MAC.
+      </p>
+
+      <div id="q-swap"></div>
+
+      <h2>Waiting for the answer</h2>
+      <p>
+        The reply does not arrive instantly, and it arrives among whatever other traffic is on the network.
+        So the code polls and filters.
+      </p>
+
+      <div id="w-resolve"></div>
+
+      <div id="m-filters"></div>
+
+      <div id="q-filter"></div>
+
+      <h2>Where the addresses came from</h2>
+      <p>
+        Two IP addresses are hardcoded in the lessons, and both are conventions of the emulator rather than
+        anything the OS worked out.
+      </p>
+
+      <div id="m-ips"></div>
+
+      <p>
+        A real OS would learn both from DHCP, which is itself a protocol running over UDP. That needs several
+        more layers, so the lessons hardcode the known values and note the shortcut honestly.
+      </p>
+
+      <h2>It worked first time</h2>
+      <p>
+        Rare enough in this project to be worth recording. The command output matched the packet capture
+        exactly.
+      </p>
+
+      <div id="t-arp"></div>
+
+      <div id="s-proof"></div>
+
+      <div class="box info">
+        <span class="t">Why that gateway MAC looks familiar</span>
+        52:55:0A:00:02:02 is not random. The last four bytes are the gateway's own IP address, 10.0.2.2,
+        written in hex as 0A 00 02 02. The emulator generates MACs for its virtual devices by embedding the
+        IP, which is a convenient trick for anyone debugging it.
+      </div>
+
+      <h2>What a real ARP implementation adds</h2>
+      <p>
+        The lessons resolve one address and print it. A full implementation does more, and knowing what is
+        missing matters for the lessons that follow.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Missing</th><th>Why it matters</th></tr></thead>
+        <tbody>
+          <tr><td>a cache</td><td>every resolve broadcasts again. Real stacks remember the answer for minutes, since asking before every packet would flood the network</td></tr>
+          <tr><td>answering requests</td><td>other machines asking for our MAC get no reply, so nothing can initiate contact with us. Fine while we only make outbound requests</td></tr>
+          <tr><td>a timeout with retries</td><td>the poll count is a fixed loop. A real stack retries a few times then reports failure to whatever asked</td></tr>
+          <tr><td>handling unsolicited replies</td><td>accepting any reply that matches is how ARP spoofing works. Real stacks apply more scrutiny, though ARP is weakly secured by nature</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        The next networking lesson needs one thing from this one: the gateway's MAC, so IP packets have
+        somewhere to go. That is delivered, which is what makes this the right stopping point.
+      </p>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("arp");
+
+Guide.memMap("m-gap", {
+  title: "Two addressing layers, click each",
+  segments: [
+    { label: "MAC address", weight: 1, addr: "6 bytes, burned into the card", desc: "Identifies a network interface. The card checks this to decide whether to accept a frame. Only meaningful on the local wire, and it says nothing about where the machine is." },
+    { label: "IP address", weight: 1, addr: "4 bytes, assigned by the network", desc: "Identifies a host anywhere on the internet, and carries routing information in its structure. Entirely a software concept, which the network card knows nothing about." },
+    { label: "the gap", weight: 1, addr: "no way to convert", desc: "A MAC is chosen by the card's manufacturer, an IP by the network's administrator. No arithmetic connects them. ARP is the lookup that bridges the two." }
+  ],
+  hint: "You need the MAC to build the frame, and you only have the IP. That is the whole problem."
+});
+
+Guide.stepper("s-exchange", {
+  title: "The complete protocol, two messages",
+  steps: [
+    {
+      head: "We know an IP and need a MAC",
+      text: "The target is 10.0.2.2, the gateway. Nothing on this machine knows its MAC address, so no frame can be addressed to it yet.",
+      state: { "known": "10.0.2.2", "needed": "its MAC" }
+    },
+    {
+      head: "Build a request",
+      text: "A 28 byte ARP packet with our MAC and IP in the sender fields, the target IP filled in, and the target MAC left as zeros because that is what we are asking for.",
+      code: "build_arp_request(request, ip);",
+      state: { "target MAC field": "all zeros, the question" }
+    },
+    {
+      head: "Broadcast it",
+      text: "Destination MAC is all 0xFF so every machine on the segment receives it. Broadcasting is necessary because we do not know who to ask.",
+      code: "uint8_t broadcast[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };\neth_send(broadcast, ETHERTYPE_ARP, request, 28);",
+      state: { "frame": "42 bytes on the wire, padded to 60" }
+    },
+    {
+      head: "Every machine reads it, one recognises itself",
+      text: "Each receiver checks the target IP against its own. All of them ignore it except the one that owns 10.0.2.2.",
+      state: { "machines that reply": "exactly one" }
+    },
+    {
+      head: "The owner replies directly",
+      text: "Not a broadcast. It knows our MAC from the sender field of the request, so it addresses the reply straight to us, with the operation set to 2 and its own MAC filled in.",
+      state: { "reply destination": "our MAC", "operation": "2, reply" }
+    },
+    {
+      head: "We read the answer out of the sender field",
+      text: "In the reply the roles have swapped, so the gateway is now the sender. Its MAC sits at bytes 8 to 13 of the ARP packet.",
+      code: "for (int i = 0; i < 6; i++) mac_out[i] = payload[8 + i];",
+      state: { "result": "10.0.2.2 is at 52:55:0A:00:02:02" }
+    }
+  ],
+  hint: "No connection is established and no state is kept. One broadcast question, one direct answer, done."
+});
+
+Guide.memMap("m-local", {
+  title: "Why ARP stays on the local network, click each",
+  segments: [
+    { label: "broadcast does not travel", weight: 2, addr: "routers do not forward it", desc: "An ARP request is a broadcast frame, and routers deliberately do not pass broadcasts between networks. If they did, one request would reach every machine on the internet, which would be unworkable." },
+    { label: "MACs are only locally meaningful", weight: 2, addr: "no routing information", desc: "A MAC address contains nothing about location. Even if a distant machine's MAC arrived somehow, there would be no way to construct a path to it. Frames only travel one hop." },
+    { label: "so ARP resolves one hop", weight: 1, addr: "the next machine along", desc: "Either the final destination if it is on your own segment, or the gateway if it is not. That single answer is all the Ethernet layer ever needs." }
+  ],
+  hint: "A limit by design rather than a shortcoming. One hop at a time is how the whole internet works."
+});
+
+Guide.stepper("s-gateway", {
+  title: "How a local only protocol reaches the internet",
+  steps: [
+    {
+      head: "The OS wants to reach a distant server",
+      text: "Some machine far away, on a different network entirely. Its IP is known but it is nowhere near us.",
+      state: { "target": "a distant IP", "on our segment": "no" }
+    },
+    {
+      head: "The IP tells us it is not local",
+      text: "Comparing the target against our own address and network mask shows it is on a different network, so it cannot be reached directly.",
+      state: { "conclusion": "must go through the gateway" }
+    },
+    {
+      head: "So the frame is addressed to the gateway instead",
+      text: "The Ethernet destination becomes the gateway's MAC, while the IP packet inside still carries the distant server's IP. Two different destinations at two different layers.",
+      state: { "frame destination": "gateway's MAC", "packet destination": "the distant server's IP" }
+    },
+    {
+      head: "Which means we need the gateway's MAC",
+      text: "And that is a local machine, one hop away, so ARP can answer it. This is the one lookup that unlocks everything beyond the local network.",
+      code: "uint8_t gateway_ip[4] = { 10, 0, 2, 2 };\narp_resolve(gateway_ip, mac);",
+      state: { "ARP target": "10.0.2.2, local" }
+    },
+    {
+      head: "The gateway forwards it onward",
+      text: "It accepts the frame because the MAC matches, looks at the IP inside, sees it is not local, and passes it toward its destination. It repeats the same reasoning with its own next hop.",
+      state: { "our involvement": "finished after one hop" }
+    },
+    {
+      head: "Which is why this lesson matters",
+      text: "Every packet the OS ever sends to the outside world will be addressed to the MAC this lesson discovered. Without it, nothing leaves the machine.",
+      state: { "unlocked": "everything beyond the local segment" }
+    }
+  ],
+  hint: "The postal analogy holds. You hand the letter to your local post office rather than driving it across the country yourself."
+});
+
+Guide.memMap("m-packet", {
+  title: "The 28 byte ARP packet, click each field",
+  segments: [
+    { label: "0 to 1", weight: 1, addr: "hardware type", desc: "0x0001 meaning Ethernet. ARP was designed to work over several kinds of network, so it says which one. Two bytes for a value that never changes here, written high byte first." },
+    { label: "2 to 3", weight: 1, addr: "protocol type", desc: "0x0800 meaning IPv4, the same value as the IPv4 EtherType. This says what kind of address we are asking about." },
+    { label: "4", weight: 1, addr: "hardware length", desc: "6, the size of a MAC address in bytes. A single byte, so no byte order concern." },
+    { label: "5", weight: 1, addr: "protocol length", desc: "4, the size of an IPv4 address. Together with the previous field this lets a parser handle address sizes it was not built for." },
+    { label: "6 to 7", weight: 1, addr: "operation", desc: "1 for a request, 2 for a reply. The only field that differs structurally between the question and the answer, and the one the filter checks." },
+    { label: "8 to 13", weight: 2, addr: "sender MAC", desc: "In a request this is us, so the replier knows where to send the answer. In a reply it is the machine that owns the IP, which makes it the answer we wanted." },
+    { label: "14 to 17", weight: 1, addr: "sender IP", desc: "In a request, ours. In a reply, the IP we asked about, which is what the filter matches on to confirm the reply is for our question." },
+    { label: "18 to 23", weight: 2, addr: "target MAC", desc: "All zeros in a request, because this is the blank we want filled. In a reply it is our MAC, echoed back." },
+    { label: "24 to 27", weight: 1, addr: "target IP", desc: "The address we are asking about. Every machine on the segment compares this against its own and only the owner replies." }
+  ],
+  hint: "Fixed offsets throughout, which is why building and parsing are both just indexed byte writes and reads."
+});
+
+Guide.codeWalk("w-constants", {
+  title: "The field values, from arp.cpp",
+  code: "static const uint8_t OUR_IP[4] = { 10, 0, 2, 15 };\n\n#define ARP_HTYPE_ETHERNET 0x0001\n#define ARP_PTYPE_IPV4     0x0800\n#define ARP_HLEN           6\n#define ARP_PLEN           4\n#define ARP_OP_REQUEST     0x0001\n#define ARP_OP_REPLY       0x0002",
+  notes: [
+    { lines: [1, 1], text: "Our own IP, hardcoded to what the emulator assigns. A real OS would learn this from DHCP, which needs UDP and therefore several more layers first." },
+    { lines: [3, 4], text: "Describing the kind of addresses involved. Ethernet and IPv4 in our case, and these values never change in the lessons." },
+    { lines: [5, 6], text: "The address sizes, six for a MAC and four for an IPv4 address. Single bytes, so no byte order handling needed." },
+    { lines: [7, 8], text: "Request and reply. The filter in arp_resolve checks for a reply specifically, since our own broadcast request comes back to us on some networks and would otherwise be mistaken for an answer." }
+  ]
+});
+
+Guide.codeWalk("w-build", {
+  title: "Building the request, from arp.cpp",
+  code: "static void build_arp_request(uint8_t* buf, const uint8_t target_ip[4]) {\n    uint8_t our_mac[6];\n    ne2000_get_mac(our_mac);\n\n    buf[0] = (ARP_HTYPE_ETHERNET >> 8) & 0xFF;\n    buf[1] = ARP_HTYPE_ETHERNET & 0xFF;\n    buf[2] = (ARP_PTYPE_IPV4 >> 8) & 0xFF;\n    buf[3] = ARP_PTYPE_IPV4 & 0xFF;\n    buf[4] = ARP_HLEN;\n    buf[5] = ARP_PLEN;\n    buf[6] = (ARP_OP_REQUEST >> 8) & 0xFF;\n    buf[7] = ARP_OP_REQUEST & 0xFF;\n\n    for (int i = 0; i < 6; i++) buf[8 + i]  = our_mac[i];\n    for (int i = 0; i < 4; i++) buf[14 + i] = OUR_IP[i];\n    for (int i = 0; i < 6; i++) buf[18 + i] = 0x00;\n    for (int i = 0; i < 4; i++) buf[24 + i] = target_ip[i];\n}",
+  notes: [
+    { lines: [2, 3], text: "Ask the driver for our MAC rather than taking it as a parameter, the same reasoning as the Ethernet layer. There is only one correct value." },
+    { lines: [5, 8], text: "Every two byte field written high byte first. Shift down eight for the high half, mask for the low half, exactly as the EtherType is written." },
+    { lines: [9, 10], text: "Single byte fields, so no byte order question. Just the literal sizes of the two address types." },
+    { lines: [11, 12], text: "The operation, big endian like the others. A reply carries 0x0002 here, which is what the filter looks for." },
+    { lines: [14, 15], text: "Our MAC and IP as the sender. The replier reads these to know where to send the answer, which is why a request has to identify itself fully." },
+    { lines: [16, 16], text: "The target MAC zeroed. This is the blank being asked about, and it is the entire point of the packet." },
+    { lines: [17, 17], text: "The target IP, the only parameter the caller supplies. Every machine on the segment compares this against its own address." }
+  ]
+});
+
+Guide.memMap("m-blank", {
+  title: "Request versus reply, click each",
+  segments: [
+    { label: "request", weight: 1, addr: "operation 1", desc: "Sender fields hold our MAC and IP. Target IP holds what we are asking about. Target MAC is all zeros, which is literally the question. Destination is broadcast because we do not know who to ask." },
+    { label: "reply", weight: 1, addr: "operation 2", desc: "The roles swap. The answering machine is now the sender, so its MAC is in bytes 8 to 13, which is our answer. Target fields hold our MAC and IP, echoed back. Destination is our MAC, not broadcast." }
+  ],
+  hint: "Same 28 byte structure both ways. What changes is the operation code and which side occupies the sender fields."
+});
+
+Guide.hexDump("h-request", {
+  title: "Our ARP request, captured leaving the card",
+  intro: "Real bytes from the lesson's packet capture. Fourteen bytes of Ethernet header then twenty eight of ARP. Hover a field.",
+  bytes: ["ff","ff","ff","ff","ff","ff","52","54","00","12","34","56","08","06","00","01",
+          "08","00","06","04","00","01","52","54","00","12","34","56","0a","00","02","0f",
+          "00","00","00","00","00","00","0a","00","02","02"],
+  fields: [
+    { name: "dest MAC", from: 0, to: 5, desc: "broadcast, all ff, because we do not know who to ask yet" },
+    { name: "source MAC", from: 6, to: 11, desc: "52:54:00:12:34:56, read out of the card at startup" },
+    { name: "EtherType", from: 12, to: 13, desc: "0x0806, ARP. High byte first, network byte order" },
+    { name: "hardware type", from: 14, to: 15, desc: "0x0001, Ethernet. The ARP packet starts here" },
+    { name: "protocol type", from: 16, to: 17, desc: "0x0800, IPv4. We are asking about an IP address" },
+    { name: "address lengths", from: 18, to: 19, desc: "6 then 4, a MAC is six bytes and an IPv4 address is four" },
+    { name: "operation", from: 20, to: 21, desc: "0x0001, a request. The reply will carry 0x0002 here" },
+    { name: "sender MAC", from: 22, to: 27, desc: "ours again, inside the ARP packet this time, so the replier knows where to answer" },
+    { name: "sender IP", from: 28, to: 31, desc: "0a 00 02 0f, which is 10.0.2.15, our hardcoded address" },
+    { name: "target MAC", from: 32, to: 37, desc: "all zeros, the blank we are asking the network to fill in" },
+    { name: "target IP", from: 38, to: 41, desc: "0a 00 02 02, which is 10.0.2.2, the gateway we want" }
+  ],
+  hint: "42 bytes total. The driver padded it to 60 with zeros before transmitting, which is the Ethernet minimum."
+});
+
+Guide.hexDump("h-reply", {
+  title: "The gateway's reply, captured arriving",
+  intro: "Same structure, four meaningful differences. Hover to compare against the request above.",
+  bytes: ["52","54","00","12","34","56","52","55","0a","00","02","02","08","06","00","01",
+          "08","00","06","04","00","02","52","55","0a","00","02","02","0a","00","02","02",
+          "52","54","00","12","34","56","0a","00","02","0f"],
+  fields: [
+    { name: "dest MAC", from: 0, to: 5, desc: "our MAC now, not broadcast. The gateway learned it from our request's sender field, so it can answer directly" },
+    { name: "source MAC", from: 6, to: 11, desc: "52:55:0a:00:02:02, the gateway. This is the answer we were after" },
+    { name: "EtherType", from: 12, to: 13, desc: "0x0806, still ARP" },
+    { name: "operation", from: 20, to: 21, desc: "0x0002 now, a reply. This is what the filter checks for, so our own broadcast cannot be mistaken for an answer" },
+    { name: "sender MAC", from: 22, to: 27, desc: "the gateway's MAC inside the ARP packet. THIS is the field the code copies out as the result" },
+    { name: "sender IP", from: 28, to: 31, desc: "0a 00 02 02, the IP we asked about. The filter matches this to confirm the reply answers our question" },
+    { name: "target MAC", from: 32, to: 37, desc: "our MAC, echoed back. No longer blank, because the gateway knows who asked" },
+    { name: "target IP", from: 38, to: 41, desc: "0a 00 02 0f, our IP echoed back" }
+  ],
+  hint: "The sender and target fields swapped sides. That is why the answer is read from the sender MAC rather than the target MAC."
+});
+
+Guide.codeWalk("w-resolve", {
+  title: "Send and wait, from arp.cpp",
+  code: "bool arp_resolve(const uint8_t ip[4], uint8_t mac_out[6]) {\n    uint8_t request[28];\n    build_arp_request(request, ip);\n\n    uint8_t broadcast[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };\n    eth_send(broadcast, ETHERTYPE_ARP, request, 28);\n\n    for (int tries = 0; tries < 200000; tries++) {\n        uint8_t   src_mac[6];\n        uint16_t  ethertype;\n        uint8_t*  payload;\n        uint16_t  len = eth_receive(src_mac, &ethertype, &payload);\n\n        if (len == 0) continue;\n        if (ethertype != ETHERTYPE_ARP) continue;\n        if (len < 28) continue;\n\n        uint16_t op = ((uint16_t)payload[6] << 8) | payload[7];\n        if (op != ARP_OP_REPLY) continue;\n\n        bool ip_matches = true;\n        for (int i = 0; i < 4; i++) {\n            if (payload[14 + i] != ip[i]) { ip_matches = false; break; }\n        }\n        if (!ip_matches) continue;\n\n        for (int i = 0; i < 6; i++) mac_out[i] = payload[8 + i];\n        return true;\n    }\n\n    return false;\n}",
+  notes: [
+    { lines: [5, 6], text: "Broadcast the request. The Ethernet layer adds the header, so this code never touches byte 12." },
+    { lines: [8, 8], text: "A fixed poll count rather than a real timeout. Crude, but with no timer based waiting in the lessons it is enough, and the reply arrives within the first few thousand iterations." },
+    { lines: [12, 12], text: "Three results from one call, using the output parameter pattern. The ampersands take addresses so the function can write into these variables." },
+    { lines: [14, 14], text: "Nothing arrived on this iteration, which is the overwhelmingly common case. Keep polling." },
+    { lines: [15, 15], text: "Not an ARP frame. Other traffic exists on the network and has to be skipped rather than parsed as ARP." },
+    { lines: [16, 16], text: "Too short to be an ARP packet. This also protects the indexed reads below from running past the received data." },
+    { lines: [18, 19], text: "Must be a reply, not a request. On some networks our own broadcast comes back to us, and without this check we would parse our own question and return the zeros from its target MAC field." },
+    { lines: [21, 25], text: "The sender IP must match what we asked about. Other machines' ARP traffic is on the wire too, and accepting any reply would return the wrong MAC." },
+    { lines: [27, 28], text: "The answer. In a reply the responder is the sender, so its MAC is at bytes 8 to 13. Reading the target MAC instead would give us our own address back." }
+  ]
+});
+
+Guide.memMap("m-filters", {
+  title: "Four filters, click each to see what it rejects",
+  segments: [
+    { label: "len == 0", weight: 2, addr: "nothing arrived", desc: "The common case by far. The poll loop runs thousands of times before anything shows up, and every empty iteration hits this and continues." },
+    { label: "not ARP", weight: 1, addr: "wrong EtherType", desc: "Other protocols share the wire. Parsing an IP packet as ARP would read meaningless bytes and could return a nonsense MAC." },
+    { label: "not a reply", weight: 1, addr: "operation is 1", desc: "Rejects requests, including possibly our own broadcast echoed back. Without this, our own question could be parsed as an answer, yielding the zeros from its blank target field." },
+    { label: "wrong sender IP", weight: 1, addr: "answers a different question", desc: "Another machine's ARP reply, for an address we did not ask about. Accepting it would pair our target IP with a completely unrelated MAC." }
+  ],
+  hint: "Each filter rejects a specific wrong answer. Remove any one and the function can succeed with bad data, which is worse than failing."
+});
+
+Guide.memMap("m-ips", {
+  title: "The two hardcoded addresses, click each",
+  segments: [
+    { label: "10.0.2.15", weight: 1, addr: "our own IP", desc: "What the emulator's virtual network assigns to the guest by convention. Used in the sender IP field so the replier knows who asked. A real OS would obtain this via DHCP." },
+    { label: "10.0.2.2", weight: 1, addr: "the gateway", desc: "The emulator's virtual router, which forwards traffic to the host's real network. This is the address the arp command resolves, and every outbound packet will eventually be addressed to its MAC." },
+    { label: "10.0.2.3", weight: 1, addr: "the DNS server", desc: "Also provided by the emulator, and not used yet. It becomes relevant once the OS needs to turn hostnames into IP addresses." }
+  ],
+  hint: "All three are conventions of the emulator's user mode networking, not values the OS discovered."
+});
+
+Guide.terminal("t-arp", {
+  title: "The arp command, recorded from a real run",
+  text: "> arp\nARP: asking who has 10.0.2.2...\n10.0.2.2 is at 52:55:0A:00:02:02\n> ",
+  hint: "The first time the OS asked another machine a question and got an answer back."
+});
+
+Guide.stepper("s-proof", {
+  title: "What this output actually proves",
+  steps: [
+    {
+      head: "The Ethernet layer built a valid frame",
+      text: "The gateway understood the frame and replied, which means the destination, source and EtherType were all correct, including the byte order on the type field.",
+      state: { "eth_send": "verified" }
+    },
+    {
+      head: "The ARP packet was correctly formed",
+      text: "The gateway parsed all 28 bytes and recognised itself as the target. Any field in the wrong place or the wrong byte order would have meant silence.",
+      state: { "packet layout": "verified" }
+    },
+    {
+      head: "Transmit reached a real machine",
+      text: "Already confirmed via packet capture in the previous lesson, but now confirmed by a reply, which is stronger evidence. Something out there acted on the frame.",
+      state: { "ne2000_send": "verified by response" }
+    },
+    {
+      head: "Receive worked, for the first time",
+      text: "This is the big one. The receive ring logic, the boundary pointer arithmetic, the four byte header parsing, all of it ran correctly on a real incoming packet.",
+      state: { "ne2000_receive": "verified live" }
+    },
+    {
+      head: "The whole stack held together",
+      text: "Five layers cooperated: PCI found the card, the driver moved bytes, Ethernet framed them, ARP structured the question, and the shell displayed the answer.",
+      state: { "layers verified": "all of them" }
+    },
+    {
+      head: "And it worked on the first attempt",
+      text: "Unusual for this project. Paging took several attempts and the MAC read had the DCR bug, but ARP came together first time, which suggests the layers underneath were genuinely solid.",
+      state: { "attempts needed": "1" }
+    }
+  ],
+  hint: "The receive path had been written two lessons earlier and could not be tested until now, because nothing was sending us anything."
+});
+
+Guide.quiz("q-broadcast", {
+  question: "Why must an ARP request be broadcast rather than sent to a specific MAC?",
+  options: [
+    { text: "Because the MAC we would send it to is the thing we are trying to discover", correct: true, why: "Right, and it is nicely circular. To address a frame you need the destination MAC, which is exactly what the request is asking for. The only escape is broadcast, where every machine on the segment receives the frame and the one that recognises the target IP answers." },
+    { text: "Because ARP replies are also broadcast", why: "They are not. The replier knows our MAC from the request's sender field and answers us directly, as the captured reply shows." },
+    { text: "So every machine can cache the pairing", why: "Some stacks do opportunistically learn from broadcasts, but that is a side benefit rather than the reason." },
+    { text: "Because broadcast frames travel faster", why: "There is no speed difference. Broadcast is about reach, not latency." }
+  ]
+});
+
+Guide.quiz("q-local", {
+  question: "Could the OS resolve a distant server's MAC with arp_resolve?",
+  options: [
+    { text: "No. ARP is broadcast based, and routers do not forward broadcasts beyond the local network", correct: true, why: "Correct, and the MAC would be useless anyway since MAC addresses carry no routing information and frames only travel one hop. Reaching a distant host means addressing the frame to the gateway's MAC while the IP packet inside still names the far destination." },
+    { text: "Yes, but it would be slow", why: "It would not work at all. The broadcast never leaves the local segment." },
+    { text: "Yes, if the target IP is correct", why: "A correct IP does not help. Nothing outside the local network ever sees the request." },
+    { text: "Only if the distant host also runs ARP", why: "It certainly does, but it never receives our request, so that is irrelevant." }
+  ]
+});
+
+Guide.quiz("q-target", {
+  question: "Why are bytes 18 to 23 of an ARP request all zero?",
+  options: [
+    { text: "That is the target MAC, the value being asked for, so it is left blank", correct: true, why: "Right. The whole purpose of the packet is to learn that MAC, so there is nothing to put there. The reply arrives with the same layout and that blank filled in, though because the roles swap the answer actually appears in the sender MAC field at bytes 8 to 13." },
+    { text: "Zeros act as padding to reach 28 bytes", why: "The packet is 28 bytes because of its defined fields. These six are a real field that happens to be empty." },
+    { text: "Zero means broadcast in the ARP packet", why: "Broadcast is all 0xFF, and it belongs in the Ethernet header rather than inside the ARP packet." },
+    { text: "The card fills them in before transmitting", why: "The card transmits exactly the bytes it is given. Nothing fills that field in on the way out." }
+  ]
+});
+
+Guide.quiz("q-swap", {
+  question: "The reply's answer is read from bytes 8 to 13, the sender MAC. Why not the target MAC?",
+  options: [
+    { text: "In a reply the responder is the sender, so its own MAC goes in the sender field", correct: true, why: "Correct. The roles swap between request and reply. The gateway is answering, so it fills the sender fields with its own MAC and IP, and puts our details in the target fields. Reading the target MAC would return our own address, which we already knew." },
+    { text: "Because the target MAC field is still zero in a reply", why: "It holds our MAC, echoed back. Not zero, just not the answer we want." },
+    { text: "The two fields hold the same value in a reply", why: "They hold different machines' addresses, which is visible in the captured reply where sender is 52:55:0a:00:02:02 and target is 52:54:00:12:34:56." },
+    { text: "The sender field is always the machine we asked about", why: "Only in a reply. In a request the sender is us, which is why the operation code has to be checked first." }
+  ]
+});
+
+Guide.quiz("q-filter", {
+  question: "Why check that the operation is a reply rather than accepting any ARP frame?",
+  options: [
+    { text: "Our own broadcast can come back to us, and parsing it as an answer would return the zeros from its blank target field", correct: true, why: "Right. On many networks a broadcast is echoed to every port including the sender's. Without the operation check, the first thing arp_resolve receives could be its own request, and it would happily read the target MAC field, returning all zeros as the gateway's address." },
+    { text: "Requests and replies have different lengths", why: "Both are exactly 28 bytes with an identical layout. Only the operation code and which fields are populated differ." },
+    { text: "Replies arrive on a different EtherType", why: "Both use 0x0806. The operation field inside the packet is the only structural distinction." },
+    { text: "To reject frames from other machines", why: "That is what the sender IP check does. The operation check specifically rejects requests, including our own." }
+  ]
+});
+</script>
+</body>
+</html>

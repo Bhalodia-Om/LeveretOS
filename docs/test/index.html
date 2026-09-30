@@ -1,0 +1,63 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>LeveretOS guide (draft)</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb">Draft guide, not linked from the site</div>
+      <h1>The LeveretOS guide</h1>
+      <p class="lede">Every concept behind the lessons, explained from the ground up and built to be poked at rather than read.</p>
+
+      <div class="box warn">
+        <span class="t">Work in progress</span>
+        This is a draft. It is not linked from anywhere on the site and search engines are told to skip it.
+      </div>
+
+      <h2>What this is</h2>
+      <p>
+        The lessons show you the code. This guide explains the ideas underneath it. If a lesson
+        writes <code>0x9A</code> into a permission byte, the lesson tells you it works, and this
+        guide shows you exactly which bits that number turns on and lets you click them yourself.
+      </p>
+      <p>
+        The target reader finished a first programming course. You know what a variable, a loop and
+        a function are. You have probably never used a bit mask in anger, never thought about which
+        end of a number comes first in memory, and never written to a hardware port. Everything past
+        that point gets explained here.
+      </p>
+
+      <h2>How to use it</h2>
+      <p>
+        Read in order if you are starting out, the Foundations pages come first for a reason. Later
+        pages assume you know hex, masks and byte order. If you came here from a specific lesson,
+        jump straight to that page and follow the links back when something is unfamiliar.
+      </p>
+      <p>
+        Nearly every page has things to click. Flip bits and watch a hex value change, step through
+        a boot sequence one line at a time, move a ring buffer's pointers around. That is deliberate:
+        these ideas stick when you drive them yourself, and they slide right off the page when you
+        just read about them.
+      </p>
+
+      <h2>Pages</h2>
+      <div id="cards"></div>
+
+    </div>
+  </main>
+</div>
+<script src="modules.js"></script>
+<script>
+  Guide.chrome("index");
+  Guide.indexCards("cards");
+</script>
+</body>
+</html>

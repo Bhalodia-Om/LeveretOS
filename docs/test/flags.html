@@ -1,0 +1,262 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>Flags and bit fields, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Foundations</div>
+      <h1>Flags and bit fields</h1>
+      <p class="lede">Hardware rarely wants one number. It wants a dozen yes or no answers crammed into a single byte, and each position means something completely different.</p>
+
+      <h2>Why cram settings together</h2>
+      <p>
+        Imagine you are designing a chip in the 1980s. You want the programmer to be able to say
+        "this memory region is present, it is writable, and only the kernel may touch it". That is
+        three separate yes or no answers.
+      </p>
+      <p>
+        You could give each one its own byte, but bytes on a chip cost real money and real wires.
+        So instead you define one byte and declare that bit 0 means present, bit 1 means writable,
+        bit 2 means user accessible. Now three settings fit in eight bits, with room for five more.
+      </p>
+      <p>
+        The catch is that the resulting number looks arbitrary. When you read
+        <code>outb(PIT_COMMAND, 0x36)</code> in the timer code, <code>0x36</code> is not a quantity.
+        It is four separate decisions packed together, and the only way to read it is to split it
+        back into bits.
+      </p>
+
+      <div class="box info">
+        <span class="t">The mental move</span>
+        When you see a hex constant written to hardware, stop reading it as a number. Convert it to
+        binary and ask what each position means. The datasheet tells you the meanings, and this page
+        shows you the pattern.
+      </div>
+
+      <h2>A real one, the GDT access byte</h2>
+      <p>
+        The GDT lesson writes two values, <code>0x9A</code> for the code segment and
+        <code>0x92</code> for the data segment. They differ by a single bit. Click the flags below
+        and watch which byte you land on.
+      </p>
+
+      <div id="m-gdt"></div>
+
+      <p>
+        Only bit 3 separates them. Everything else is identical: present, ring 0, normal segment,
+        readable or writable. That is why the lesson comment says the two values differ by one bit,
+        and now you can see exactly which one.
+      </p>
+
+      <h2>Fields wider than one bit</h2>
+      <p>
+        Sometimes a setting has more than two possible values, so it needs more than one bit. Two
+        bits give you four choices, three bits give you eight. The datasheet describes these as a
+        range, like "bits 5 to 4 select the access mode".
+      </p>
+      <p>
+        The PIT command byte from the timer lesson is a good example. It packs a channel number, an
+        access mode, an operating mode and a format flag into eight bits.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">0x36 taken apart, the PIT command byte</div>
+        <div class="st-code">0x36  =  0 0 1 1 0 1 1 0
+         | | |   |   |
+         | | |   |   +-- bit 0     : 0 = the divisor is in binary, not BCD
+         | | |   +------ bits 3-1  : 011 = mode 3, square wave, fires like a metronome
+         | | +---------- bits 5-4  : 11 = send the 16 bit divisor as two 8 bit writes, low byte first
+         +-+------------ bits 7-6  : 00 = channel 0</div>
+        <div class="hint">Four unrelated settings, one byte. This is why the lesson comment spells out each bit range.</div>
+      </div>
+
+      <p>
+        Notice the bit ranges are written high to low, "bits 5-4" rather than "bits 4-5". That is the
+        convention everywhere in hardware documentation, because binary is written with the most
+        significant bit on the left. It matches how you would read the number.
+      </p>
+
+      <h2>Why the code uses names, not numbers</h2>
+      <p>
+        Every lesson defines constants rather than writing raw hex at the call site. The NE2000
+        driver is the clearest case.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">From the NE2000 driver</div>
+        <div class="st-code">#define CR_STOP    0x01
+#define CR_START   0x02
+#define CR_RDMA_RD 0x08
+#define CR_PAGE0   0x00
+#define CR_PAGE1   0x40
+
+// then, at the call site:
+outb(io_base + NE_CR, CR_RDMA_RD | CR_START);</div>
+        <div class="hint">That last line reads as an instruction: start a remote DMA read, with the card running. Written as 0x0A it would read as nothing at all.</div>
+      </div>
+
+      <p>
+        The OR combines them, exactly as covered on the bits page. Each constant contributes its own
+        bit, none of them collide, and the result is a single byte the chip understands.
+      </p>
+
+      <div id="m-cr"></div>
+
+      <h2>Reading a field back out</h2>
+      <p>
+        Writing flags is easy, you OR them together. Reading them is where the mask comes in. To ask
+        "is the card finished with the DMA transfer", the driver checks one bit out of the status
+        register.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">Testing a single flag</div>
+        <div class="st-code">#define ISR_RDC 0x40   // bit 6, remote DMA complete
+
+while ((inb(io_base + NE_ISR) &amp; ISR_RDC) == 0) { }</div>
+        <div class="hint">Read the whole byte, mask off everything except bit 6, and loop while the result is zero. The other seven bits could be anything and this still works.</div>
+      </div>
+
+      <p>
+        This is why masking matters so much. The status register holds eight unrelated pieces of news
+        at once. Without the mask you would be testing all of them together and the condition would
+        be meaningless.
+      </p>
+
+      <div id="q-isr"></div>
+
+      <h2>Clearing flags by writing ones</h2>
+      <p>
+        Here is a piece of hardware behaviour that catches everybody. On many chips, including the
+        NE2000, you clear a status bit by writing a <strong>1</strong> to it, not a 0. It feels
+        backwards.
+      </p>
+      <p>
+        The logic from the chip's side is that a status register is a set of latches. Writing a 1
+        means "I have seen this one, reset it". Writing a 0 means "leave this one alone". So the
+        driver writes <code>0xFF</code> to clear every pending status bit at once.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">From the NE2000 reset</div>
+        <div class="st-code">outb(io_base + NE_ISR, 0xFF);   // clear all interrupt status bits</div>
+        <div class="hint">All ones, meaning acknowledge everything. Writing 0x00 here would clear nothing.</div>
+      </div>
+
+      <div class="box warn">
+        <span class="t">Always check the datasheet direction</span>
+        Whether a register is write-1-to-clear, write-0-to-clear, or plain read and write is a
+        per-register decision made by whoever designed the chip. There is no universal rule, which
+        is exactly why driver code is full of comments explaining what each write is for.
+      </div>
+
+      <h2>The same idea at every layer</h2>
+      <p>
+        Bit fields are not just a hardware register thing. Once you can read them, you will spot the
+        pattern everywhere in the lessons.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Where</th><th>What is packed</th></tr></thead>
+        <tbody>
+          <tr><td>GDT access byte</td><td>present, privilege level, code or data, readable or writable</td></tr>
+          <tr><td>Page table entry</td><td>a physical address in the top 20 bits, flags in the low 12</td></tr>
+          <tr><td>PCI config address</td><td>an enable bit, bus, device, function and register offset in one 32 bit word</td></tr>
+          <tr><td>PIC mask register</td><td>one bit per interrupt line, 1 means blocked</td></tr>
+          <tr><td>Heap block header</td><td>a size, plus a free or used flag</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        The page table entry is the most elegant one. Because pages are 4 KB aligned, the low 12 bits
+        of a page address are always zero, so they would be wasted. The designers put the flags
+        there instead. The paging page covers how that works.
+      </p>
+
+      <div id="q-pte"></div>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("flags");
+
+Guide.bitfield("m-gdt", {
+  title: "The GDT access byte, click the flags",
+  intro: "Start from zero and click each row in the legend. Try to build 0x9A, then flip bit 3 to get 0x92.",
+  width: 8,
+  value: 0,
+  fields: [
+    { bit: 7, name: "present", desc: "this descriptor is in use, always 1 for a real segment" },
+    { bit: 6, name: "privilege high", desc: "part of the 2 bit ring number" },
+    { bit: 5, name: "privilege low", desc: "0 and 0 together mean ring 0, the kernel" },
+    { bit: 4, name: "descriptor type", desc: "1 means a normal code or data segment" },
+    { bit: 3, name: "executable", desc: "1 makes it a CODE segment, 0 makes it DATA. This is the only difference between 0x9A and 0x92" },
+    { bit: 2, name: "direction", desc: "grow direction for data, conforming for code. Left at 0" },
+    { bit: 1, name: "read or write", desc: "on code it means readable, on data it means writable. Set in both of ours" },
+    { bit: 0, name: "accessed", desc: "the CPU sets this itself, we leave it clear" }
+  ],
+  match: {
+    "154": "the code segment, present, ring 0, executable and readable",
+    "146": "the data segment, present, ring 0, not executable but writable",
+    "144": "present ring 0 data, but not writable. Your variables could not be changed",
+    "128": "present only, with no type bits, the CPU would reject this"
+  }
+});
+
+Guide.bitfield("m-cr", {
+  title: "The NE2000 command register, build a real command",
+  intro: "Click the constants the driver actually ORs together and watch the byte form.",
+  width: 8,
+  value: 0,
+  fields: [
+    { bit: 6, name: "CR_PAGE1", desc: "0x40, switch to register page 1" },
+    { bit: 4, name: "CR_RDMA_WR", desc: "0x10, start a remote DMA write, pushing bytes into the card" },
+    { bit: 3, name: "CR_RDMA_RD", desc: "0x08, start a remote DMA read, pulling bytes out of the card" },
+    { bit: 2, name: "CR_TRANS", desc: "0x04, transmit the frame sitting in the TX page" },
+    { bit: 1, name: "CR_START", desc: "0x02, the card is running" },
+    { bit: 0, name: "CR_STOP", desc: "0x01, the card is stopped" }
+  ],
+  match: {
+    "10": "CR_RDMA_RD | CR_START, used to read the MAC out of the card",
+    "18": "CR_RDMA_WR | CR_START, used to push a frame into card RAM",
+    "6": "CR_TRANS | CR_START, tells the card to send the frame",
+    "33": "CR_STOP | CR_PAGE1, stopped and on page 1, used while writing the MAC",
+    "2": "CR_START on its own, the card simply running",
+    "1": "CR_STOP on its own, halt the card before touching its RAM"
+  }
+});
+
+Guide.quiz("q-isr", {
+  question: "The status register reads 0x62. The driver checks (status & 0x40). What happens?",
+  options: [
+    { text: "The condition is true, because bit 6 is set in 0x62", correct: true, why: "Right. 0x62 is 0110 0010, so bit 6 is on. Masking with 0x40 isolates just that bit and the result is non zero. The other set bits, 5 and 1, are ignored." },
+    { text: "The condition is false, because 0x62 is not equal to 0x40", why: "That would be true if the code compared with ==. Masking asks whether specific bits are set, not whether the whole byte matches." },
+    { text: "It depends on the other bits", why: "That is the point of a mask. Once you AND with 0x40, every bit except bit 6 is forced to zero, so nothing else can affect the answer." },
+    { text: "The condition errors, since you cannot AND hex values", why: "AND works on the underlying bits. Hex is only how we write the number down." }
+  ]
+});
+
+Guide.quiz("q-pte", {
+  question: "Page table entries put flags in the LOW 12 bits of a 32 bit value. Why is that spot free?",
+  options: [
+    { text: "Pages are 4 KB aligned, so the low 12 bits of a page address are always zero", correct: true, why: "Exactly. 4096 is 2 to the 12, so any 4 KB aligned address ends in twelve zero bits. Those bits carry no address information, so the designers reused them for flags." },
+    { text: "The CPU ignores the low bits of any address", why: "Not in general. It ignores them here specifically because of the alignment rule, which is what makes the trick safe." },
+    { text: "Flags are always stored at the bottom of a value by convention", why: "There is no such universal convention. In the PCI config address the enable flag sits at bit 31, right at the top." },
+    { text: "Twelve bits is the smallest field a CPU can address", why: "CPUs address bytes, which are eight bits. The number twelve comes from the page size, nothing else." }
+  ]
+});
+</script>
+</body>
+</html>

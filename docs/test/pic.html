@@ -1,0 +1,419 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>The PIC, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Talking to hardware</div>
+      <h1>The PIC</h1>
+      <p class="lede">A chip that collects interrupt requests from every device and passes them to the CPU one at a time. Out of the box its numbering collides with CPU exceptions, so the first job is moving it out of the way.</p>
+
+      <h2>Why a middleman exists</h2>
+      <p>
+        The CPU has a single interrupt request pin. There are far more than one device wanting to
+        interrupt. Something has to sit in between, collect the requests, prioritise them and feed them
+        through one at a time.
+      </p>
+      <p>
+        That chip is the Programmable Interrupt Controller. It handles eight lines, which was not enough
+        even in the 1980s, so PCs have two of them wired together.
+      </p>
+
+      <div id="m-chips"></div>
+
+      <p>
+        The slave does not talk to the CPU directly. Its output feeds into the master's line 2, so a
+        request from the slave arrives at the CPU as if it came through the master. That detail matters
+        later when acknowledging interrupts.
+      </p>
+
+      <div class="box info">
+        <span class="t">Which line is which</span>
+        IRQ0 is the timer and IRQ1 is the keyboard, both on the master, which is why the lessons only
+        ever touch those two. IRQ2 is not a real device, it is where the slave plugs in.
+      </div>
+
+      <h2>The collision that forces a remap</h2>
+      <p>
+        By default the PIC delivers its eight master lines as interrupt numbers 8 through 15. That range
+        is already taken.
+      </p>
+
+      <div id="m-collide"></div>
+
+      <p>
+        So a keypress on IRQ1 arrives as interrupt 9, which the CPU also uses for a coprocessor
+        exception. The dispatcher cannot tell whether a genuine fault occurred or somebody pressed a key.
+        Worse, a timer tick on IRQ0 arrives as interrupt 8, the double fault.
+      </p>
+
+      <div id="q-collide"></div>
+
+      <p>
+        The fix is to tell the PIC to use different numbers. It is programmable, which is what the P
+        stands for, so you can move its whole range up past the 32 reserved exceptions.
+      </p>
+
+      <div id="s-remap"></div>
+
+      <h2>Initialisation command words</h2>
+      <p>
+        Reprogramming the PIC means sending four bytes in a fixed order. The chip is from an era when
+        configuration was a sequence rather than a set of independent registers, so the order is not
+        optional.
+      </p>
+
+      <div id="w-icw"></div>
+
+      <p>
+        Every byte goes to both chips, because both need configuring. The only differences are ICW2,
+        where each chip gets its own base number, and ICW3, where one is told it has a slave and the
+        other is told it is one.
+      </p>
+
+      <div class="box warn">
+        <span class="t">The order is part of the protocol</span>
+        After ICW1 the chip is waiting for the rest of the sequence. Sending them out of order, or
+        skipping one, leaves it half configured with no error reported. The lessons send all four to both
+        chips in strict order for exactly this reason.
+      </div>
+
+      <h2>Masking, and the bug it caused</h2>
+      <p>
+        After the four command words comes a fifth write, the interrupt mask. One bit per line, and the
+        polarity is the opposite of what most people guess.
+      </p>
+
+      <div id="m-mask"></div>
+
+      <p>
+        A set bit means blocked. So <code>0xFF</code> blocks everything and <code>0x00</code> allows
+        everything. The lessons use <code>0xFC</code> on the master, which is <code>11111100</code>:
+        bits 0 and 1 clear, so the timer and keyboard are allowed and the rest are blocked.
+      </p>
+
+      <div id="q-mask"></div>
+
+      <p>
+        This is where lesson 11 produced a real crash, and it is worth understanding because the failure
+        mode is so unhelpful.
+      </p>
+
+      <div id="s-bug"></div>
+
+      <div class="box warn">
+        <span class="t">The rule that came out of it</span>
+        Never unmask an interrupt line before its IDT gate has a handler. The lessons masked the timer
+        with <code>0xFD</code> until lesson 13 added a timer handler, then changed to <code>0xFC</code>.
+        The ordering is not stylistic, it is what stops the machine rebooting.
+      </div>
+
+      <h2>End of interrupt</h2>
+      <p>
+        The PIC does not send another interrupt on a line until you tell it the previous one is finished.
+        That acknowledgement is one byte to a command port, and forgetting it is the most common PIC
+        mistake.
+      </p>
+
+      <div id="w-eoi"></div>
+
+      <p>
+        The symptom is distinctive. Everything works exactly once. One keypress registers, then the
+        keyboard appears dead, because the PIC is still waiting to hear that the first interrupt was
+        handled.
+      </p>
+
+      <div id="s-eoi"></div>
+
+      <div id="q-eoi"></div>
+
+      <h2>Why the slave needs two acknowledgements</h2>
+      <p>
+        The one piece of genuine subtlety in the EOI code. Because the slave's output passes through the
+        master's line 2, an interrupt from the slave was handled by both chips.
+      </p>
+
+      <div id="m-eoipath"></div>
+
+      <p>
+        So both need telling. The lessons handle this with a single comparison: if the IRQ number is 8 or
+        higher it came from the slave, so acknowledge the slave first and then always acknowledge the
+        master.
+      </p>
+
+      <p>
+        In practice the lessons only ever use IRQ0 and IRQ1, both on the master, so the slave branch
+        never runs. It is written correctly anyway, because getting it wrong later would be a confusing
+        bug to find.
+      </p>
+
+      <h2>The full sequence in one place</h2>
+      <p>
+        Nine port writes configure the entire interrupt system. Here is what each one accomplishes.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Write</th><th>Port</th><th>Value</th><th>Meaning</th></tr></thead>
+        <tbody>
+          <tr><td>ICW1</td><td>0x20</td><td>0x11</td><td>master: begin initialisation, expect an ICW4</td></tr>
+          <tr><td>ICW1</td><td>0xA0</td><td>0x11</td><td>slave: same</td></tr>
+          <tr><td>ICW2</td><td>0x21</td><td>0x20</td><td>master: deliver my lines starting at interrupt 32</td></tr>
+          <tr><td>ICW2</td><td>0xA1</td><td>0x28</td><td>slave: deliver my lines starting at interrupt 40</td></tr>
+          <tr><td>ICW3</td><td>0x21</td><td>0x04</td><td>master: a slave is attached on line 2</td></tr>
+          <tr><td>ICW3</td><td>0xA1</td><td>0x02</td><td>slave: I am attached to the master's line 2</td></tr>
+          <tr><td>ICW4</td><td>0x21</td><td>0x01</td><td>master: use 8086 mode</td></tr>
+          <tr><td>ICW4</td><td>0xA1</td><td>0x01</td><td>slave: same</td></tr>
+          <tr><td>mask</td><td>0x21</td><td>0xFC</td><td>master: allow only lines 0 and 1, the timer and keyboard</td></tr>
+          <tr><td>mask</td><td>0xA1</td><td>0xFF</td><td>slave: block everything, nothing there is used</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        Note which port each value goes to. ICW1 goes to the command port, everything after it goes to
+        the data port. That is another piece of the chip's protocol: once initialisation starts, the data
+        port is where the rest of the sequence is expected.
+      </p>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("pic");
+
+Guide.memMap("m-chips", {
+  title: "Two chips, sixteen lines, click each",
+  segments: [
+    { label: "master PIC", weight: 1, addr: "ports 0x20 and 0x21", desc: "Handles IRQ0 to IRQ7, and connects directly to the CPU's interrupt pin. IRQ0 is the timer, IRQ1 is the keyboard, and IRQ2 is where the slave plugs in rather than a real device. Port 0x20 is commands, 0x21 is data and the mask." },
+    { label: "slave PIC", weight: 1, addr: "ports 0xA0 and 0xA1", desc: "Handles IRQ8 to IRQ15. Its output feeds the master's line 2 instead of the CPU, so requests pass through the master. The lessons mask it entirely since nothing on it is used." }
+  ],
+  hint: "Two chips because eight lines was not enough. The chaining is why acknowledging a slave interrupt takes two writes."
+});
+
+Guide.memMap("m-collide", {
+  title: "The default numbering collides, click each",
+  segments: [
+    { label: "interrupts 0 to 7", weight: 2, addr: "CPU exceptions", desc: "Divide by zero, debug, breakpoint, overflow, invalid opcode and others. Fixed by the architecture, not negotiable." },
+    { label: "interrupts 8 to 15", weight: 2, addr: "collision zone", desc: "The CPU uses these for double fault, invalid TSS, segment not present, stack fault, general protection fault and page fault. The PIC also delivers IRQ0 to IRQ7 here by default. Both cannot own the same numbers." },
+    { label: "interrupts 16 to 31", weight: 2, addr: "more exceptions", desc: "Floating point, alignment check, machine check and several reserved slots. Still CPU territory." },
+    { label: "interrupts 32 and up", weight: 3, addr: "free for us", desc: "Nothing in the architecture claims these. This is where the PIC gets remapped to, so IRQ0 becomes interrupt 32 and IRQ1 becomes 33." }
+  ],
+  hint: "The whole remap exists to move the PIC out of the range the CPU already owns."
+});
+
+Guide.stepper("s-remap", {
+  title: "What the remap actually changes",
+  steps: [
+    {
+      head: "Before: IRQ1 arrives as interrupt 9",
+      text: "A keypress and a coprocessor segment overrun exception both show up as interrupt 9. The dispatcher has no way to distinguish them.",
+      state: { "IRQ0 timer": "interrupt 8", "IRQ1 keyboard": "interrupt 9", "problem": "both are also exceptions" }
+    },
+    {
+      head: "Send ICW2 with a new base",
+      text: "The second initialisation command word tells the chip which interrupt number its first line should use. 0x20 is 32 in decimal.",
+      code: "outb(PIC1_DATA, 0x20);   // master starts at 32\noutb(PIC2_DATA, 0x28);   // slave starts at 40",
+      state: { "master base": "32", "slave base": "40" }
+    },
+    {
+      head: "After: IRQ1 arrives as interrupt 33",
+      text: "The master's lines now land on 32 through 39, and the slave's on 40 through 47. Nothing overlaps the exceptions any more.",
+      state: { "IRQ0 timer": "interrupt 32", "IRQ1 keyboard": "interrupt 33" }
+    },
+    {
+      head: "The IDT gates have to match",
+      text: "The interrupt table registers handlers at the new numbers. These have to agree with the remap, and with the numbers the assembly stubs push.",
+      code: "idt_set_entry(32, (uint32_t)irq0, 0x08, 0x8E);   // timer\nidt_set_entry(33, (uint32_t)irq1, 0x08, 0x8E);   // keyboard",
+      state: { "gate 32": "irq0 stub", "gate 33": "irq1 stub" }
+    },
+    {
+      head: "And so does the dispatcher",
+      text: "Three places have to use the same numbers: the PIC base, the IDT gates, and the comparisons in the dispatcher. A mismatch in any one of them silently routes interrupts to the wrong code.",
+      code: "else if (interrupt_number == 33) { /* keyboard */ }\nelse if (interrupt_number == 32) { /* timer */ }",
+      state: { "consistent": "PIC, IDT and dispatcher all use 32 and 33" }
+    }
+  ],
+  hint: "Remapping is one byte per chip. Keeping three separate files agreeing about the result is the harder part."
+});
+
+Guide.codeWalk("w-icw", {
+  title: "The four command words, from pic.cpp",
+  code: "void pic_remap() {\n    outb(PIC1_COMMAND, 0x11);\n    outb(PIC2_COMMAND, 0x11);\n\n    outb(PIC1_DATA, 0x20);   // master base = 32\n    outb(PIC2_DATA, 0x28);   // slave base = 40\n\n    outb(PIC1_DATA, 0x04);   // a slave is on line 2\n    outb(PIC2_DATA, 0x02);   // I am the slave on line 2\n\n    outb(PIC1_DATA, 0x01);   // 8086 mode\n    outb(PIC2_DATA, 0x01);\n\n    outb(PIC1_DATA, 0xFC);   // allow IRQ0 and IRQ1 only\n    outb(PIC2_DATA, 0xFF);   // block everything on the slave\n}",
+  notes: [
+    { lines: [2, 3], text: "ICW1. The value 0x11 sets bit 4, which means begin initialisation, and bit 0, which means expect an ICW4 later. This is the only one sent to the command port." },
+    { lines: [5, 6], text: "ICW2, the remap itself. Each chip is told the interrupt number of its first line. Everything else about the PIC configuration exists to support this one change." },
+    { lines: [8, 9], text: "ICW3 describes the wiring. On the master, 0x04 has bit 2 set, meaning a slave is attached to line 2. On the slave, 0x02 is the line number it is attached to, not a bit mask." },
+    { lines: [8, 9], text: "Two different encodings for the same fact, which is the kind of inconsistency that makes this chip awkward. The master gets a bit mask, the slave gets a plain number." },
+    { lines: [11, 12], text: "ICW4 with 0x01 selects 8086 mode rather than the older 8080 mode. Nothing else in the byte is used here." },
+    { lines: [14, 15], text: "Not a command word, the interrupt mask. It happens to go to the same port, which is why it comes last in the sequence rather than being a separate function." }
+  ],
+  hint: "Nine writes, and the only one doing the remap is ICW2. The rest is protocol the chip insists on."
+});
+
+Guide.bitfield("m-mask", {
+  title: "The interrupt mask, 1 means blocked",
+  intro: "Click bits to block or allow lines. A CLEAR bit allows the interrupt. Try building 0xFC, what the lessons use.",
+  width: 8,
+  value: 0xFC,
+  fields: [
+    { bit: 0, name: "IRQ0, timer", desc: "clear to allow the PIT tick. Interrupt 32 after the remap" },
+    { bit: 1, name: "IRQ1, keyboard", desc: "clear to allow keypresses. Interrupt 33 after the remap" },
+    { bit: 2, name: "IRQ2, slave", desc: "where the second PIC attaches. The lessons leave it blocked" },
+    { bit: 3, name: "IRQ3", desc: "serial port. Unused" },
+    { bit: 4, name: "IRQ4", desc: "serial port. Unused" },
+    { bit: 5, name: "IRQ5", desc: "usually sound or a spare. Unused" },
+    { bit: 6, name: "IRQ6", desc: "floppy disc controller. Unused" },
+    { bit: 7, name: "IRQ7", desc: "parallel port. Unused" }
+  ],
+  match: {
+    "252": "0xFC, what the lessons use from lesson 13 onward. Timer and keyboard allowed, everything else blocked",
+    "253": "0xFD, lessons 11 and 12. Keyboard only, timer still blocked because it had no handler yet",
+    "255": "0xFF, everything blocked. No hardware interrupts reach the CPU at all",
+    "0": "0x00, everything allowed. Any device with no handler would fault the moment it fired",
+    "254": "0xFE, timer only, keyboard blocked. Typing would do nothing"
+  }
+});
+
+Guide.stepper("s-bug", {
+  title: "The lesson 11 triple fault, step by step",
+  steps: [
+    {
+      head: "The intent was to enable the keyboard",
+      text: "Lesson 11 moves the keyboard from polling to interrupts. That needs an IDT gate for interrupt 33 and the PIC mask unblocking IRQ1.",
+      state: { "IDT gate 33": "keyboard handler, present", "IDT gate 32": "empty" }
+    },
+    {
+      head: "The mask allowed too much",
+      text: "With bit 0 also clear, IRQ0 was unblocked. The timer chip runs from power on whether or not anything is listening, so it was already ticking.",
+      code: "outb(PIC1_DATA, 0xFC);   // allows BOTH IRQ0 and IRQ1",
+      state: { "IRQ0": "allowed", "handler for interrupt 32": "does not exist" }
+    },
+    {
+      head: "sti runs and the timer fires almost immediately",
+      text: "At 100 Hz the first tick arrives within ten milliseconds. The CPU looks up gate 32 in the IDT.",
+      state: { "interrupt": "32", "gate 32": "all zeros, not present" }
+    },
+    {
+      head: "Fault one: the gate is not present",
+      text: "An interrupt on an empty gate raises a general protection fault, interrupt 13. That gate does exist, so in principle it could be handled.",
+      state: { "first fault": "13, general protection fault" }
+    },
+    {
+      head: "Fault two: handling that fault also fails",
+      text: "While trying to deliver the fault, something goes wrong again. Two faults in a row is a double fault, interrupt 8.",
+      state: { "second fault": "8, double fault" }
+    },
+    {
+      head: "Fault three: the CPU gives up",
+      text: "A fault while handling a double fault is a triple fault, and the CPU has no recovery path. It resets the machine. The OS reboots with no message at all.",
+      state: { "result": "silent reboot", "message on screen": "nothing" }
+    },
+    {
+      head: "The fix was one byte",
+      text: "Mask the timer until it has a handler. Lesson 11 used 0xFD, keyboard only, and it changed to 0xFC in lesson 13 when the timer handler was written.",
+      code: "outb(PIC1_DATA, 0xFD);   // keyboard only, timer stays blocked",
+      state: { "IRQ0": "blocked", "result": "boots cleanly" }
+    }
+  ],
+  hint: "The lesson from this is the ordering rule: a gate must exist before its line is unmasked."
+});
+
+Guide.codeWalk("w-eoi", {
+  title: "Acknowledging an interrupt, from pic.cpp",
+  code: "#define PIC_EOI 0x20   // the end of interrupt command byte\n\nvoid pic_send_eoi(uint8_t irq) {\n    if (irq >= 8) {\n        outb(PIC2_COMMAND, PIC_EOI);   // tell the slave\n    }\n    outb(PIC1_COMMAND, PIC_EOI);       // always tell the master\n}",
+  notes: [
+    { lines: [1, 1], text: "The value 0x20 happens to be the same number as the master's command port, which is a coincidence and a common source of confusion. One is a port address, the other is a command byte." },
+    { lines: [4, 4], text: "IRQ numbers 8 and above belong to the slave. Below that they are on the master." },
+    { lines: [5, 5], text: "A slave interrupt passed through the master's line 2, so both chips think they are mid interrupt. The slave is told first." },
+    { lines: [7, 7], text: "The master is always told, for every interrupt, whether it originated there or on the slave. No condition around this one." },
+    { lines: [3, 8], text: "The lessons only use IRQ0 and IRQ1, so the slave branch never actually runs. It is written correctly anyway to avoid a nasty surprise if a slave device is ever added." }
+  ]
+});
+
+Guide.stepper("s-eoi", {
+  title: "What happens if you forget the EOI",
+  steps: [
+    {
+      head: "The first keypress works",
+      text: "IRQ1 fires, the CPU runs the handler, the character appears on screen. Everything looks correct.",
+      state: { "keypresses handled": "1", "PIC state": "mid interrupt on line 1" }
+    },
+    {
+      head: "The handler returns without acknowledging",
+      text: "iret brings the CPU back to normal code. But the PIC still believes line 1 is being serviced, because nothing told it otherwise.",
+      code: "// missing:  pic_send_eoi(1);",
+      state: { "PIC in service register": "IRQ1 still set" }
+    },
+    {
+      head: "A second key is pressed",
+      text: "The keyboard raises IRQ1 again. The PIC sees a request on a line it thinks is still busy, so it holds the request rather than passing it on.",
+      state: { "request": "pending, not delivered", "CPU": "never notified" }
+    },
+    {
+      head: "The keyboard appears dead",
+      text: "No further interrupts arrive on that line, ever. The symptom is that exactly one keystroke worked and then input stopped, with no error anywhere.",
+      state: { "keypresses handled": "still 1", "OS state": "waiting forever in read_line" }
+    },
+    {
+      head: "One line fixes it",
+      text: "Acknowledging clears the in service bit, so the PIC is free to deliver the next request on that line.",
+      code: "pic_send_eoi(1);",
+      state: { "result": "every keystroke works" }
+    }
+  ],
+  hint: "Works exactly once, then nothing, is the signature of a missing EOI. Worth recognising quickly."
+});
+
+Guide.memMap("m-eoipath", {
+  title: "Why a slave interrupt needs two acknowledgements",
+  segments: [
+    { label: "device on IRQ10", weight: 1, addr: "the source", desc: "Some device attached to the slave raises its line. The slave records that line 2 of its own inputs is in service." },
+    { label: "slave PIC", weight: 1, addr: "marks itself busy", desc: "The slave cannot reach the CPU directly, so it raises its output, which is wired to the master's line 2. It now considers itself mid interrupt and will not pass another request until acknowledged." },
+    { label: "master PIC", weight: 1, addr: "also marks itself busy", desc: "The master sees a request on its line 2 and passes it to the CPU. It too is now mid interrupt on that line, for the same reason." },
+    { label: "the CPU", weight: 1, addr: "runs the handler", desc: "The handler must acknowledge both chips, because both are holding an in service bit. Telling only the master would leave the slave permanently blocked." }
+  ],
+  hint: "The interrupt passed through two chips, so two chips need to hear that it finished."
+});
+
+Guide.quiz("q-collide", {
+  question: "Without remapping, a timer tick on IRQ0 arrives as interrupt 8. Why is that particularly bad?",
+  options: [
+    { text: "Interrupt 8 is the double fault, so every tick looks like a catastrophic CPU error", correct: true, why: "Right. The dispatcher checks whether the number is below 32 and treats anything there as an exception, so it would print double fault and halt the machine. A routine timer tick would kill the OS a hundred times a second." },
+    { text: "Interrupt 8 is reserved and cannot be used at all", why: "It is usable, it just already means double fault. The problem is ambiguity, not a prohibition." },
+    { text: "The timer is too fast for interrupt 8 to keep up", why: "Speed is not the issue. The number collides with an exception the CPU already defines." },
+    { text: "Interrupt 8 belongs to the slave PIC", why: "IRQ8 is the slave's first line, but that is an IRQ number not an interrupt number. The collision here is between the PIC's default interrupt numbering and the CPU's exceptions." }
+  ]
+});
+
+Guide.quiz("q-mask", {
+  question: "You write 0xFE to the master's mask. What is allowed through?",
+  options: [
+    { text: "Only IRQ0, the timer, because only bit 0 is clear", correct: true, why: "Correct. 0xFE is 1111 1110. A set bit blocks, so every line is blocked except bit 0. The timer would tick but typing would do nothing at all, since IRQ1 is masked." },
+    { text: "Only IRQ1, the keyboard", why: "That would be 0xFD, with bit 1 clear. In 0xFE it is bit 0 that is clear." },
+    { text: "Everything except IRQ0", why: "The polarity is inverted from that guess. A clear bit allows, a set bit blocks, so 0xFE allows exactly one line." },
+    { text: "Nothing, since 0xFE is nearly all ones", why: "Nearly all, but not quite. The single clear bit is what lets one line through, which is the whole point of the mask." }
+  ]
+});
+
+Guide.quiz("q-eoi", {
+  question: "The keyboard works for exactly one keypress and then stops. What is the most likely cause?",
+  options: [
+    { text: "The handler is not sending an end of interrupt to the PIC", correct: true, why: "Right, and the one-then-nothing pattern is the giveaway. The PIC keeps an in service bit set until acknowledged, and while it is set no further request on that line is delivered. The handler itself is working fine, which is why the first keystroke succeeded." },
+    { text: "The IDT gate for interrupt 33 is missing", why: "Then the first keypress would have faulted too. A missing gate fails immediately, not after one success." },
+    { text: "The keyboard buffer is full after one character", why: "The driver's buffer holds 128 characters and the controller's is cleared by reading the port, which the handler does." },
+    { text: "Interrupts were disabled by the handler and never re-enabled", why: "iret restores the flags register including the interrupt enable bit, so that happens automatically." }
+  ]
+});
+</script>
+</body>
+</html>

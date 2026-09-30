@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>Byte order, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Foundations</div>
+      <h1>Byte order</h1>
+      <p class="lede">A number bigger than one byte has to be stored as several bytes. Nobody ever agreed on which end goes first, and that disagreement is now permanent.</p>
+
+      <h2>The problem</h2>
+      <p>
+        The value <code>0x1234</code> needs two bytes: <code>0x12</code> and <code>0x34</code>. If
+        you are storing it at memory address 100, which byte goes at 100 and which at 101?
+      </p>
+      <p>
+        Both answers are defensible, and both were chosen by different hardware designers. There is
+        no winner, only a convention you have to know for whichever thing you are talking to.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Order</th><th>Address 100</th><th>Address 101</th><th>Who uses it</th></tr></thead>
+        <tbody>
+          <tr><td>Little endian</td><td><code>0x34</code></td><td><code>0x12</code></td><td>x86 CPUs, so your whole OS</td></tr>
+          <tr><td>Big endian</td><td><code>0x12</code></td><td><code>0x34</code></td><td>network protocols, so every packet</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        Little endian means the <em>little</em> end, the least significant byte, comes first. Big
+        endian means the big end comes first. Big endian matches how humans write numbers, which is
+        why it feels more natural, and it is also why network designers picked it.
+      </p>
+
+      <div id="m-flip"></div>
+
+      <h2>Why your CPU being little endian rarely matters</h2>
+      <p>
+        Inside your own program, byte order is invisible. When you write
+        <code>uint16_t x = 0x1234;</code> and read <code>x</code> back, you get
+        <code>0x1234</code>. The CPU stored it backwards in memory and read it back backwards, so
+        the two cancel out.
+      </p>
+      <p>
+        It becomes visible the moment bytes leave your program and land somewhere that has its own
+        opinion. That happens in two places in the lessons, and they pull in opposite directions.
+      </p>
+
+      <h2>Case one, hardware registers want the low byte first</h2>
+      <p>
+        Most of the chips in the lessons are 8 bit era designs with 8 bit registers. To give them a
+        16 bit number you write it in two halves, and they almost always want the low half first.
+      </p>
+
+      <div id="m-pit"></div>
+
+      <p>
+        The timer lesson does exactly this. The PIT command byte even contains a setting that says
+        "the divisor is coming as two writes, low byte first", which is bits 5 to 4 of
+        <code>0x36</code>. The chip is telling you the order it expects.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">From the timer</div>
+        <div class="st-code">outb(PIT_CHANNEL0, (uint8_t)(divisor &amp; 0xFF));          // low byte
+outb(PIT_CHANNEL0, (uint8_t)((divisor &gt;&gt; 8) &amp; 0xFF));   // high byte</div>
+        <div class="hint">Mask for the low byte, shift then mask for the high byte. Two writes to the same port.</div>
+      </div>
+
+      <p>
+        The NE2000 driver follows the same shape everywhere it deals in 16 bit values, though it uses
+        two separate ports rather than writing twice to one. <code>RBCR0</code> takes the low byte of
+        the DMA byte count and <code>RBCR1</code> takes the high byte. The <code>0</code> and
+        <code>1</code> suffixes are a naming convention meaning low and high.
+      </p>
+
+      <div id="m-dma"></div>
+
+      <h2>Case two, network packets want the high byte first</h2>
+      <p>
+        Now the opposite. Every multi byte field in a network packet is big endian, high byte first.
+        This is so universal it has a name, network byte order.
+      </p>
+      <p>
+        The reason is practical. Two machines with different CPU designs need to exchange packets and
+        agree on what the bytes mean. Rather than negotiate, the protocol designers fixed one order
+        forever. Since the internet grew up on big endian machines, big endian won.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">From the Ethernet layer</div>
+        <div class="st-code">frame[12] = (ethertype &gt;&gt; 8) &amp; 0xFF;   // high byte FIRST
+frame[13] = ethertype &amp; 0xFF;          // low byte second</div>
+        <div class="hint">Compare this to the timer code above. Same operators, opposite order. That is the whole difference between hardware order and network order.</div>
+      </div>
+
+      <p>
+        Reading a field back reverses the process. You take the first byte, shift it up into the high
+        position, and OR the second byte underneath it.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">Reading it back</div>
+        <div class="st-code">*ethertype_out = ((uint16_t)rx_frame[12] &lt;&lt; 8) | rx_frame[13];</div>
+        <div class="hint">Byte 12 becomes the high half, byte 13 the low half. The cast to uint16_t matters, without it the shift could overflow an 8 bit value and lose the byte entirely.</div>
+      </div>
+
+      <div id="q-order"></div>
+
+      <h2>Seeing it in a real captured frame</h2>
+      <p>
+        Here are the actual bytes the OS put on the wire during the ARP lesson, taken from a packet
+        capture. Hover a field to see where it sits.
+      </p>
+
+      <div id="m-hex"></div>
+
+      <p>
+        Look at the EtherType, <code>08 06</code>. The value is <code>0x0806</code> and the bytes
+        appear in that same visual order, high byte first. If the OS had written it little endian you
+        would see <code>06 08</code> and every machine on the network would read it as
+        <code>0x0608</code>, which means nothing. The frame would be silently ignored.
+      </p>
+
+      <div class="box warn">
+        <span class="t">The failure mode is silence</span>
+        Getting byte order wrong in a packet does not crash anything. The receiving machine reads a
+        field it does not recognise and drops the frame. You see nothing at all, which makes it one
+        of the harder bugs to chase. The lesson overview flags it as the classic networking mistake
+        for good reason.
+      </div>
+
+      <h2>A rule of thumb</h2>
+      <p>
+        When you are writing to a chip, check the datasheet, and expect low byte first. When you are
+        building a packet, always high byte first, no exceptions. If you are ever unsure which side
+        you are on, ask whether the bytes are about to leave the machine.
+      </p>
+
+      <div id="q-which"></div>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("endian");
+
+Guide.packBuilder("m-flip", {
+  title: "The same value, both orders",
+  intro: "Type any 16 bit value, in decimal or as 0x hex, and see how each convention lays it out in memory.",
+  label: "16 bit value:",
+  value: "0x1234",
+  srcBits: 16,
+  parts: [
+    { label: "little endian, first byte", expr: "v & 0xFF", calc: function (v) { return v & 0xFF; } },
+    { label: "little endian, second byte", expr: "(v >> 8) & 0xFF", calc: function (v) { return (v >> 8) & 0xFF; } },
+    { label: "big endian, first byte", expr: "(v >> 8) & 0xFF", calc: function (v) { return (v >> 8) & 0xFF; } },
+    { label: "big endian, second byte", expr: "v & 0xFF", calc: function (v) { return v & 0xFF; } }
+  ],
+  hint: "The two conventions are mirror images. Nothing changes about the value, only which byte lands first."
+});
+
+Guide.packBuilder("m-pit", {
+  title: "Splitting the PIT divisor, low byte first",
+  intro: "The timer divides 1193182 by your target frequency. Try 100 for a 100 Hz timer, the value the lessons use.",
+  label: "divisor:",
+  value: "11931",
+  srcBits: 16,
+  parts: [
+    { label: "first write, low byte", expr: "divisor & 0xFF", calc: function (v) { return v & 0xFF; } },
+    { label: "second write, high byte", expr: "(divisor >> 8) & 0xFF", calc: function (v) { return (v >> 8) & 0xFF; } }
+  ],
+  hint: "11931 is 1193182 / 100, giving roughly 100 ticks per second."
+});
+
+Guide.packBuilder("m-dma", {
+  title: "A DMA byte count across two ports",
+  intro: "The NE2000 takes a 16 bit transfer length as two 8 bit register writes. Try 1514, the largest Ethernet frame.",
+  label: "byte count:",
+  value: "1514",
+  srcBits: 16,
+  parts: [
+    { label: "RBCR0, low", expr: "len & 0xFF", calc: function (v) { return v & 0xFF; } },
+    { label: "RBCR1, high", expr: "(len >> 8) & 0xFF", calc: function (v) { return (v >> 8) & 0xFF; } }
+  ],
+  hint: "Try 12 as well. That is the count the driver uses when reading the MAC address out of the card's PROM."
+});
+
+Guide.hexDump("m-hex", {
+  title: "A real ARP request, captured leaving the card",
+  intro: "These are genuine bytes from the lesson 21 packet capture. Hover a legend row or a byte.",
+  bytes: ["ff","ff","ff","ff","ff","ff","52","54","00","12","34","56","08","06","00","01",
+          "08","00","06","04","00","01","52","54","00","12","34","56","0a","00","02","0f",
+          "00","00","00","00","00","00","0a","00","02","02"],
+  fields: [
+    { name: "dest MAC", from: 0, to: 5, desc: "all ff, the broadcast address, because we do not know who to ask yet" },
+    { name: "source MAC", from: 6, to: 11, desc: "52:54:00:12:34:56, read out of the card itself at boot" },
+    { name: "EtherType", from: 12, to: 13, desc: "0x0806 meaning ARP, stored high byte first. This is network byte order in action" },
+    { name: "hardware type", from: 14, to: 15, desc: "0x0001, Ethernet. Two bytes for a value that fits in one, again high byte first" },
+    { name: "protocol type", from: 16, to: 17, desc: "0x0800, IPv4, the kind of address we are asking about" },
+    { name: "address lengths", from: 18, to: 19, desc: "6 then 4, the size of a MAC and the size of an IPv4 address" },
+    { name: "operation", from: 20, to: 21, desc: "0x0001 means request. A reply would carry 0x0002 here" },
+    { name: "sender MAC", from: 22, to: 27, desc: "our MAC again, so the machine that answers knows where to send the reply" },
+    { name: "sender IP", from: 28, to: 31, desc: "0a 00 02 0f, which is 10.0.2.15. IP addresses are already written high byte first" },
+    { name: "target MAC", from: 32, to: 37, desc: "all zero, this is the blank we are asking the network to fill in" },
+    { name: "target IP", from: 38, to: 41, desc: "0a 00 02 02, which is 10.0.2.2, the gateway we are looking for" }
+  ],
+  hint: "Every multi byte field here reads left to right in the same order you would say it out loud. That is what big endian buys you."
+});
+
+Guide.quiz("q-order", {
+  question: "You write frame[12] = ethertype & 0xFF; frame[13] = (ethertype >> 8) & 0xFF; for the ARP type 0x0806. What goes on the wire?",
+  options: [
+    { text: "06 08, and the receiver ignores the frame", correct: true, why: "Right. You put the low byte first, which is little endian. The receiver reads 0x0608, does not recognise it as any protocol, and silently drops the frame. No error, no crash, just nothing happening." },
+    { text: "08 06, since the compiler fixes the order", why: "The compiler does exactly what you wrote. It has no idea these bytes are destined for a network and will not reorder them for you." },
+    { text: "An out of range error, as 0x0806 does not fit in a byte", why: "Each assignment masks down to one byte, so both writes are valid. The bug is the order, not the size." },
+    { text: "08 06, because x86 is little endian and the network expects that", why: "The network expects big endian, the opposite of x86. That mismatch is the whole reason you have to write the bytes out by hand." }
+  ]
+});
+
+Guide.quiz("q-which", {
+  question: "Which of these needs the HIGH byte written first?",
+  options: [
+    { text: "The ARP operation field inside a packet", correct: true, why: "Correct. Anything inside a network packet is big endian, high byte first. The other three are all hardware registers, which take the low byte first." },
+    { text: "The PIT divisor sent to the timer chip", why: "That is a hardware register and takes the low byte first. The command byte 0x36 even has a bit that says so." },
+    { text: "The NE2000 DMA byte count in RBCR0 and RBCR1", why: "Hardware registers again. RBCR0 gets the low byte, RBCR1 the high byte." },
+    { text: "The DMA start address in RSAR0 and RSAR1", why: "Same convention as the byte count. RSAR0 is low, RSAR1 is high." }
+  ]
+});
+</script>
+</body>
+</html>

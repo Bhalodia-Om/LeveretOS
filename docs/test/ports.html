@@ -1,0 +1,347 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>Port I/O, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Talking to hardware</div>
+      <h1>Port I/O</h1>
+      <p class="lede">The screen was memory you could write to. Most other devices are not. They live in a separate numbered space that needs its own CPU instructions, and that difference shapes every driver in the project.</p>
+
+      <h2>Two completely separate address spaces</h2>
+      <p>
+        An x86 CPU has two ways to reach the outside world, and they do not overlap. Memory addresses
+        are one space, I/O ports are another. Address 0x60 in memory and port 0x60 are unrelated
+        places.
+      </p>
+
+      <div id="m-spaces"></div>
+
+      <p>
+        This is why you cannot reach the keyboard with a pointer. There is no address you can cast and
+        dereference, because the keyboard is not in the memory space at all. The only way in is the
+        <code>in</code> and <code>out</code> instructions, and C++ has no syntax for those.
+      </p>
+
+      <div class="box info">
+        <span class="t">Why two spaces exist</span>
+        The original 8086 had a small memory space and devices were scarce, so giving peripherals their
+        own 65536 port numbers kept them out of the way of RAM. Later designs mostly abandoned this in
+        favour of memory mapping, which is why modern cards use memory mapped registers. The devices in
+        these lessons are old enough to use ports.
+      </div>
+
+      <h2>The four functions</h2>
+      <p>
+        <code>io.h</code> contains four tiny functions and nothing else. They are the only doorway
+        between the OS and every port based device it touches.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Function</th><th>Direction</th><th>Width</th><th>Used for</th></tr></thead>
+        <tbody>
+          <tr><td><code>inb</code></td><td>read</td><td>8 bits</td><td>keyboard scancodes, RTC fields, NE2000 registers</td></tr>
+          <tr><td><code>outb</code></td><td>write</td><td>8 bits</td><td>PIC setup, PIT divisor, NE2000 commands</td></tr>
+          <tr><td><code>inl</code></td><td>read</td><td>32 bits</td><td>PCI config data</td></tr>
+          <tr><td><code>outl</code></td><td>write</td><td>32 bits</td><td>PCI config address</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        The suffix is the width: <code>b</code> for byte, <code>l</code> for long meaning 32 bits.
+        There is a 16 bit <code>inw</code> and <code>outw</code> too, but the lessons never needed it.
+      </p>
+
+      <h2>Reading the inline assembly</h2>
+      <p>
+        These functions are the first inline assembly in the project, and the syntax is dense. It is
+        worth taking apart once, because after this it repeats with small variations.
+      </p>
+
+      <div id="w-inb"></div>
+
+      <p>
+        The three colon separated groups are the structure: instruction, then outputs, then inputs. The
+        quoted letters are constraints telling the compiler which register each value must live in,
+        because the <code>in</code> instruction is picky about that.
+      </p>
+
+      <div id="q-constraint"></div>
+
+      <h2>Same constraint, different register</h2>
+      <p>
+        Comparing <code>inb</code> and <code>inl</code> side by side raises an obvious question. They
+        use the identical constraint <code>"=a"</code>, so how does one produce 8 bits and the other
+        32?
+      </p>
+
+      <div id="w-compare"></div>
+
+      <p>
+        The answer is that <code>"a"</code> means the accumulator register, which has three names
+        depending on how much of it you use. They are all the same physical register, just different
+        sized windows onto it.
+      </p>
+
+      <div id="m-eax"></div>
+
+      <p>
+        The compiler picks the name from the variable's type. A <code>uint8_t</code> result means
+        <code>AL</code>, a <code>uint32_t</code> result means <code>EAX</code>. The instruction
+        mnemonic already fixes the transfer width, and the constraint just has to agree with it, which
+        it does automatically.
+      </p>
+
+      <h2>Why volatile appears here too</h2>
+      <p>
+        Every one of these functions marks its assembly <code>volatile</code>. Without it the compiler
+        would be free to optimise the instruction away.
+      </p>
+      <p>
+        Consider reading the keyboard port twice in a row. To the compiler, <code>inb(0x60)</code> is a
+        function that takes 0x60 and returns a value, with no visible side effects. Called twice with
+        the same argument, it should give the same answer, so why do it twice?
+      </p>
+      <p>
+        But reading the keyboard port actually consumes a scancode from the controller. The second read
+        returns something different, and skipping it loses a keystroke. <code>volatile</code> is how
+        you tell the compiler this instruction matters even when its result looks predictable.
+      </p>
+
+      <div class="box warn">
+        <span class="t">The pattern to remember</span>
+        Anything that touches hardware needs <code>volatile</code>: port I/O, memory mapped registers,
+        and variables shared with interrupt handlers. All three appear in the lessons and all three
+        break in confusing ways without it.
+      </div>
+
+      <h2>A port is often a window, not a value</h2>
+      <p>
+        The most useful mental shift on this page. You might expect each port to hold one value, like a
+        variable. Many do not. Instead, one port selects what you are talking about and a second port
+        carries the data.
+      </p>
+      <p>
+        The RTC is the clearest example. There are dozens of fields inside the clock chip, but only two
+        ports.
+      </p>
+
+      <div id="s-rtc"></div>
+
+      <p>
+        So port 0x71 does not hold the seconds, or the hours, or anything fixed. It holds whatever
+        field you last selected through port 0x70. The pair together behave like an array index and an
+        array element.
+      </p>
+
+      <div id="w-rtcread"></div>
+
+      <p>
+        This address plus data pattern shows up three more times in the lessons, and recognising it
+        makes each new device much less mysterious.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Device</th><th>Address port</th><th>Data port</th></tr></thead>
+        <tbody>
+          <tr><td>RTC</td><td>0x70, picks a register</td><td>0x71, reads or writes it</td></tr>
+          <tr><td>PCI</td><td>0xCF8, picks bus, device and offset</td><td>0xCFC, reads the 32 bit value</td></tr>
+          <tr><td>NE2000 remote DMA</td><td>RSAR and RBCR set an address and a count</td><td>port 0x10, streams the bytes</td></tr>
+          <tr><td>PIT</td><td>0x43, the command byte selects channel and mode</td><td>0x40, takes the divisor</td></tr>
+        </tbody>
+      </table>
+
+      <div id="q-window"></div>
+
+      <h2>Base plus offset</h2>
+      <p>
+        One more pattern, used heavily by the NE2000 driver. A device gets a block of consecutive ports,
+        and the driver stores the first one then adds a fixed offset for each register.
+      </p>
+
+      <div id="m-base"></div>
+
+      <p>
+        The base is not known at compile time, it is read from the PCI configuration at boot, which is
+        why it lives in a variable rather than a <code>#define</code>. The offsets are fixed by the chip
+        design, so those are constants. Every register access is the variable plus a constant.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">From the NE2000 driver</div>
+        <div class="st-code">static uint16_t io_base = 0;    // filled in from PCI at boot
+
+#define NE_CR      0x00         // command register
+#define NE_ISR     0x07         // interrupt status
+#define NE_DATA    0x10         // the remote DMA data window
+
+// every access is base plus offset:
+outb(io_base + NE_CR, CR_STOP | CR_PAGE0);
+uint8_t status = inb(io_base + NE_ISR);</div>
+        <div class="hint">If io_base were wrong, every register access would land on some other device's ports. That failure mode is covered on the PCI page.</div>
+      </div>
+
+      <h2>Ports you will meet in the lessons</h2>
+      <p>
+        These numbers are fixed by decades of PC convention. No driver gets to choose them, they are
+        simply known.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Port</th><th>Device</th><th>Appears in</th></tr></thead>
+        <tbody>
+          <tr><td><code>0x20</code>, <code>0x21</code></td><td>the master PIC, command and data</td><td>pic.cpp</td></tr>
+          <tr><td><code>0x40</code>, <code>0x43</code></td><td>the PIT, channel 0 data and command</td><td>timer.cpp</td></tr>
+          <tr><td><code>0x60</code>, <code>0x64</code></td><td>the keyboard controller, data and status</td><td>io.h, idt.cpp</td></tr>
+          <tr><td><code>0x70</code>, <code>0x71</code></td><td>the RTC, address and data</td><td>rtc.cpp</td></tr>
+          <tr><td><code>0xA0</code>, <code>0xA1</code></td><td>the slave PIC, command and data</td><td>pic.cpp</td></tr>
+          <tr><td><code>0xCF8</code>, <code>0xCFC</code></td><td>PCI configuration, address and data</td><td>pci.cpp</td></tr>
+        </tbody>
+      </table>
+
+      <div class="box">
+        <span class="t">Where the network card differs</span>
+        Every port above is a fixed number. The NE2000's ports are not, because it is a PCI card and the
+        firmware assigns it a block at boot. That is the whole reason the PCI scan exists: to find out
+        where the card ended up before you can talk to it.
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("ports");
+
+Guide.memMap("m-spaces", {
+  title: "Two address spaces, click each",
+  segments: [
+    { label: "memory space", weight: 3, addr: "0x00000000 to 0xFFFFFFFF", desc: "4 GB of addresses. Holds RAM, the kernel, the stack, and memory mapped windows like the VGA buffer at 0xB8000. Reached with pointers, which is ordinary C++." },
+    { label: "I/O port space", weight: 1, addr: "port 0x0000 to 0xFFFF", desc: "65536 port numbers, completely separate from memory. Holds the keyboard controller, the timer, the PIC, the RTC, PCI configuration. Reached only with the in and out CPU instructions, which C++ has no syntax for." }
+  ],
+  hint: "Port 0x60 and memory address 0x60 have nothing to do with each other. Different instructions, different wires, different worlds."
+});
+
+Guide.codeWalk("w-inb", {
+  title: "inb taken apart, from io.h",
+  code: "static inline uint8_t inb(uint16_t port) {\n    uint8_t result;\n    asm volatile (\"inb %1, %0\"\n                  : \"=a\"(result)\n                  : \"Nd\"(port));\n    return result;\n}",
+  notes: [
+    { lines: [1, 1], text: "static inline means private to this file and pasted in at each call site. For a single instruction wrapper, a real function call would cost more than the work itself." },
+    { lines: [3, 3], text: "The quoted string is the actual instruction. %0 and %1 are placeholders that the compiler fills with whatever registers it chose, numbered in the order the operands are declared below." },
+    { lines: [3, 3], text: "volatile stops the compiler deciding this instruction is unnecessary. Reading a port has side effects the compiler cannot see, such as consuming a scancode." },
+    { lines: [4, 4], text: "After the first colon come outputs. The = means write only, and a means the accumulator register, because the in instruction always delivers its result there." },
+    { lines: [5, 5], text: "After the second colon come inputs. N allows the port to be a small constant baked into the instruction, d allows it to go in the DX register for larger values. The compiler picks whichever fits." },
+    { lines: [2, 6], text: "The wrapper exists so the rest of the OS never writes assembly. Every driver just calls inb and outb like normal functions." }
+  ]
+});
+
+Guide.codeWalk("w-compare", {
+  title: "inb and inl, nearly identical",
+  code: "static inline uint8_t inb(uint16_t port) {\n    uint8_t result;\n    asm volatile (\"inb %1, %0\" : \"=a\"(result) : \"Nd\"(port));\n    return result;\n}\n\nstatic inline uint32_t inl(uint16_t port) {\n    uint32_t result;\n    asm volatile (\"inl %1, %0\" : \"=a\"(result) : \"Nd\"(port));\n    return result;\n}",
+  notes: [
+    { lines: [1, 2], text: "uint8_t here. This type is what decides the register size, not the constraint." },
+    { lines: [3, 3], text: "The instruction is inb, b for byte. It transfers 8 bits and delivers them in AL." },
+    { lines: [7, 8], text: "uint32_t here. Same constraint string as above, but a 32 bit variable." },
+    { lines: [9, 9], text: "The instruction is inl, l for long. It transfers 32 bits and delivers them in EAX. The constraint a resolves to EAX because the variable is 32 bits wide." },
+    { lines: [3, 9], text: "Identical constraints, different behaviour, decided entirely by the variable types. This is the one genuinely surprising thing about these four functions." }
+  ],
+  hint: "The lessons added inl and outl specifically for PCI, which reads and writes its configuration space in 32 bit words."
+});
+
+Guide.memMap("m-eax", {
+  title: "One register, three names, click each",
+  segments: [
+    { label: "AL, 8 bits", weight: 1, addr: "bits 0 to 7", desc: "The low byte. This is where inb puts its result. Writing a uint8_t variable with the a constraint selects this name." },
+    { label: "AH, 8 bits", weight: 1, addr: "bits 8 to 15", desc: "The second byte, addressable separately for historical reasons. Not used by the port functions." },
+    { label: "the rest of EAX", weight: 2, addr: "bits 16 to 31", desc: "Only reachable as part of the full 32 bit register. AX means bits 0 to 15, EAX means all 32. inl uses EAX." }
+  ],
+  hint: "AL, AX and EAX are not three registers. They are three sized views of the same storage, which is why the same constraint letter works for all of them."
+});
+
+Guide.stepper("s-rtc", {
+  title: "Reading the hour from the clock chip",
+  steps: [
+    {
+      head: "There are only two ports for dozens of fields",
+      text: "The RTC holds seconds, minutes, hours, the date, and several status registers. All of it goes through port 0x70 and port 0x71.",
+      state: { "0x70": "address port", "0x71": "data port" }
+    },
+    {
+      head: "Write which register you want to 0x70",
+      text: "Register 0x04 is the hour. Writing that number to the address port selects it, and nothing is read yet.",
+      code: "outb(CMOS_ADDRESS, 0x04);",
+      state: { "selected register": "0x04, the hour" }
+    },
+    {
+      head: "Read the value from 0x71",
+      text: "Now the data port carries the hour. Reading it gives the value of whichever register you just selected.",
+      code: "uint8_t value = inb(CMOS_DATA);",
+      state: { "value": "the hour, in BCD" }
+    },
+    {
+      head: "Select a different register and 0x71 means something else",
+      text: "Writing 0x00 to the address port switches the data port to the seconds. Same port number, completely different meaning.",
+      code: "outb(CMOS_ADDRESS, 0x00);\nuint8_t secs = inb(CMOS_DATA);",
+      state: { "selected register": "0x00, the seconds", "0x71 now carries": "the seconds" }
+    }
+  ],
+  hint: "This is why the lessons wrap the pair in a helper. Doing the two steps by hand every time would be easy to get out of order."
+});
+
+Guide.codeWalk("w-rtcread", {
+  title: "The helper that hides the pattern, from rtc.cpp",
+  code: "#define CMOS_ADDRESS 0x70\n#define CMOS_DATA    0x71\n\nstatic uint8_t read_register(uint8_t reg) {\n    outb(CMOS_ADDRESS, reg);\n    return inb(CMOS_DATA);\n}\n\n// now reading fields is one line each:\nt.second = read_register(0x00);\nt.minute = read_register(0x02);\nt.hour   = read_register(0x04);",
+  notes: [
+    { lines: [4, 7], text: "Two lines wrapped in a function. Select, then read. Every caller gets the ordering right for free." },
+    { lines: [5, 5], text: "The write must come first. Reading the data port before selecting a register gives you whatever was selected last, which is a genuinely confusing bug." },
+    { lines: [10, 12], text: "The register numbers are not sequential. Seconds is 0x00, minutes is 0x02, hours is 0x04, with the odd numbers holding alarm values nobody uses. The chip designers chose these and they cannot be derived." }
+  ]
+});
+
+Guide.packBuilder("m-base", {
+  title: "Base plus offset, work out a real port number",
+  intro: "QEMU often assigns the NE2000 a base of 0xC000. Type a base and see where each register lands.",
+  label: "io_base:",
+  value: "0xC000",
+  srcBits: 16,
+  parts: [
+    { label: "CR, offset 0x00", expr: "io_base + 0x00", calc: function (b) { return (b + 0x00) & 0xFF; } },
+    { label: "ISR, offset 0x07", expr: "io_base + 0x07", calc: function (b) { return (b + 0x07) & 0xFF; } },
+    { label: "DATA, offset 0x10", expr: "io_base + 0x10", calc: function (b) { return (b + 0x10) & 0xFF; } },
+    { label: "RESET, offset 0x1F", expr: "io_base + 0x1F", calc: function (b) { return (b + 0x1F) & 0xFF; } }
+  ],
+  hint: "Only the low byte is shown here to keep it readable. The point is that the offsets are fixed by the chip while the base is discovered at boot."
+});
+
+Guide.quiz("q-constraint", {
+  question: "In asm volatile (\"inb %1, %0\" : \"=a\"(result) : \"Nd\"(port)), what is %0?",
+  options: [
+    { text: "result, because outputs are numbered first", correct: true, why: "Right. Operands are numbered in declaration order across both groups, outputs before inputs. So %0 is result and %1 is port. Swapping them in the instruction string would read from the wrong place." },
+    { text: "port, because it appears first in the instruction", why: "Position in the instruction string does not set the numbering. The order the operands are declared after the colons does." },
+    { text: "The accumulator register, always", why: "%0 refers to whichever operand is numbered zero. It happens to live in the accumulator here because of the a constraint, but the number and the register are separate ideas." },
+    { text: "A literal zero passed to the instruction", why: "The percent sign marks a placeholder the compiler substitutes. A literal zero would be written as $0 in this syntax." }
+  ]
+});
+
+Guide.quiz("q-window", {
+  question: "Your code reads port 0x71 without writing to 0x70 first. What do you get?",
+  options: [
+    { text: "Whichever register was selected last, which could be anything", correct: true, why: "Correct. The data port is a window, and the address port decides what it looks at. With no write first you read whatever the previous selection left behind, which might be the seconds when you wanted the hour." },
+    { text: "Always the seconds, since that is register zero", why: "Only if register zero happened to be selected. The chip does not reset the selection between reads." },
+    { text: "Zero, because nothing was requested", why: "The port always returns something. There is no concept of an unrequested read." },
+    { text: "A fault, since the port is write only", why: "Port 0x71 is readable. The problem is ambiguity about what it is currently showing, not permissions." }
+  ]
+});
+</script>
+</body>
+</html>

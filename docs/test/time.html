@@ -1,0 +1,445 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>Timer and clock, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Talking to hardware</div>
+      <h1>Timer and clock</h1>
+      <p class="lede">Two completely separate chips that both involve time. One is a metronome for measuring intervals, the other is a calendar that remembers the date while the machine is off.</p>
+
+      <h2>Two chips, two jobs</h2>
+      <p>
+        Confusing these is easy because both are about time, but they answer different questions and
+        neither can do the other's job.
+      </p>
+
+      <div id="m-two"></div>
+
+      <p>
+        The PIT cannot tell you the date, it has no idea what a date is. The RTC cannot give you a steady
+        interrupt, it just holds the current time. So the lessons use both.
+      </p>
+
+      <h2>How the PIT produces a steady tick</h2>
+      <p>
+        The chip has a fixed input frequency it cannot change, roughly 1.19 MHz. You cannot ask it for
+        100 interrupts per second directly. Instead you give it a divisor, and it counts down from that
+        number, firing each time it reaches zero.
+      </p>
+
+      <div id="s-divisor"></div>
+
+      <p>
+        So the rate is the base frequency divided by your divisor. Working out the divisor is one
+        division, and the lessons do it at the top of <code>timer_init</code>.
+      </p>
+
+      <div id="m-freq"></div>
+
+      <div class="box info">
+        <span class="t">Where 1193182 comes from</span>
+        The original PC derived its timer clock from the same crystal used for video timing, chosen so
+        that colour television signals worked. The number is 315/22 MHz divided by 12, and it has been
+        carried forward unchanged for forty years. Nobody would pick it deliberately today.
+      </div>
+
+      <h2>The command byte</h2>
+      <p>
+        Before sending the divisor you send one byte describing how the chip should behave. It packs four
+        separate settings, which makes it a good example of a bit field in the wild.
+      </p>
+
+      <div id="m-cmd"></div>
+
+      <p>
+        Bits 5 and 4 are the interesting pair for this page. They tell the chip that a 16 bit value is
+        arriving as two separate 8 bit writes, low byte first. The chip is announcing the byte order it
+        expects, which is the hardware convention covered on the
+        <a href="endian.html">byte order page</a>.
+      </p>
+
+      <div id="w-init"></div>
+
+      <div id="q-cmd"></div>
+
+      <h2>Counting ticks</h2>
+      <p>
+        The handler is deliberately tiny. It increments a counter and acknowledges the interrupt, and
+        that is all.
+      </p>
+
+      <div id="w-tick"></div>
+
+      <p>
+        At 100 Hz this runs a hundred times a second, forever, for as long as the machine is on. Anything
+        slow in here would steal time from everything else, which is why counting is the entire job.
+      </p>
+
+      <div id="q-volatile"></div>
+
+      <h2>Turning ticks into seconds</h2>
+      <p>
+        A tick count is only meaningful if you know the rate, which is why the lessons store the
+        frequency alongside the counter.
+      </p>
+
+      <div id="m-ticks"></div>
+
+      <p>
+        Dividing the tick count by the frequency gives seconds since boot. Keeping the frequency in a
+        variable rather than hardcoding 100 means the arithmetic stays correct if the rate ever changes.
+      </p>
+
+      <h2>The RTC, a different chip entirely</h2>
+      <p>
+        The real time clock sits on a small battery so it keeps running when the machine is off. It holds
+        the wall clock time and date, and it is reached through the address and data port pattern from
+        the <a href="ports.html">port I/O page</a>.
+      </p>
+
+      <div id="m-regs"></div>
+
+      <p>
+        The register numbers are not sequential, because the odd numbers in between hold alarm values
+        nobody uses. You cannot derive them, they are simply what the chip designers chose.
+      </p>
+
+      <div id="w-read"></div>
+
+      <h2>BCD, the gotcha that bit the lessons</h2>
+      <p>
+        Here is the thing that produces wrong times and confuses everybody the first time. The RTC does
+        not return binary numbers. It returns binary coded decimal, where each nibble holds one decimal
+        digit.
+      </p>
+
+      <div id="m-bcd"></div>
+
+      <p>
+        So the byte <code>0x42</code> means forty two, not sixty six. Read it as binary and you get a
+        number that is wrong in a way that looks almost plausible, which is the worst kind of wrong.
+      </p>
+
+      <div id="s-bcd"></div>
+
+      <div id="w-bcd"></div>
+
+      <div id="q-bcd"></div>
+
+      <div class="box warn">
+        <span class="t">Why BCD at all</span>
+        The chip was designed to drive a digital display directly. With one digit per nibble, showing the
+        time needs no arithmetic, you just map each nibble to a glyph. Convenient for 1984 hardware,
+        inconvenient for software that wants to do maths on the value.
+      </div>
+
+      <h2>Checking the format rather than assuming</h2>
+      <p>
+        Most machines return BCD, but the chip can be configured for binary. Rather than assume, the
+        lessons read a status register and check.
+      </p>
+
+      <div id="w-status"></div>
+
+      <p>
+        The logic reads oddly because the bit means the opposite of what you might expect. Bit 2 set
+        means binary mode, so BCD is indicated by the bit being clear, hence the negation.
+      </p>
+
+      <div id="q-status"></div>
+
+      <h2>What the lessons deliberately skipped</h2>
+      <p>
+        The RTC has genuine subtleties that a narrow scope can ignore, and it is worth knowing they exist
+        rather than discovering them later as bugs.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Issue</th><th>What could happen</th><th>Lessons' choice</th></tr></thead>
+        <tbody>
+          <tr><td>reading mid update</td><td>the chip updates once a second, and reading during that moment can give inconsistent fields, for example 10:59:60</td><td>ignored, since the clock is read on demand and a one in a thousand glitch is acceptable</td></tr>
+          <tr><td>12 hour mode</td><td>bit 1 of the status register selects 12 or 24 hour, and in 12 hour mode the high bit of the hour is a PM flag</td><td>assumed 24 hour, which is what QEMU provides</td></tr>
+          <tr><td>the century</td><td>the year register holds only two digits, so 2026 reads as 26</td><td>not handled, the lessons only print the time</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        Each of these is a real consideration for a real OS. Leaving them out is a scope decision, not an
+        oversight, and the lesson comments say so.
+      </p>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("time");
+
+Guide.memMap("m-two", {
+  title: "The two chips, click each",
+  segments: [
+    { label: "PIT, the metronome", weight: 1, addr: "ports 0x40 and 0x43", desc: "Programmable Interval Timer. Fires an interrupt at a rate you choose, 100 times a second in the lessons. Answers how much time has passed. Knows nothing about dates, and forgets everything when power is lost." },
+    { label: "RTC, the calendar", weight: 1, addr: "ports 0x70 and 0x71", desc: "Real Time Clock. Battery backed, so it keeps counting while the machine is off. Answers what time is it right now. Holds hours, minutes, seconds and the date, but does not produce a steady tick for us." }
+  ],
+  hint: "Different questions. Measuring an interval needs the PIT, knowing the wall clock time needs the RTC."
+});
+
+Guide.stepper("s-divisor", {
+  title: "How a divisor becomes an interrupt rate",
+  steps: [
+    {
+      head: "The chip has a fixed input frequency",
+      text: "Roughly 1.19 MHz, set by the crystal on the board. You cannot change it, and there is no register to request a rate directly.",
+      state: { "PIT_BASE": "1193182 Hz" }
+    },
+    {
+      head: "You supply a divisor",
+      text: "The chip loads your number into a counter and decrements it on every input pulse.",
+      code: "uint32_t divisor = PIT_BASE / frequency;\n// for 100 Hz:  1193182 / 100 = 11931",
+      state: { "divisor": "11931", "counter": "counting down from 11931" }
+    },
+    {
+      head: "It fires when the counter hits zero",
+      text: "Each time the count reaches zero the chip raises IRQ0 and reloads the divisor, so it repeats forever with no further involvement from you.",
+      state: { "interrupt": "IRQ0 raised", "counter": "reloaded to 11931" }
+    },
+    {
+      head: "The rate is base divided by divisor",
+      text: "1193182 pulses per second divided by 11931 pulses per tick gives just about 100 ticks per second.",
+      code: "1193182 / 11931 = 100.006 ticks per second",
+      state: { "actual rate": "100.006 Hz", "error": "about 6 parts per 100000" }
+    },
+    {
+      head: "The rate is never exact",
+      text: "The base frequency does not divide evenly by most useful rates, so there is always a small error. Fine for a tick counter, not good enough for precise timekeeping, which is one reason the RTC exists separately.",
+      state: { "good for": "measuring intervals", "not good for": "wall clock accuracy" }
+    }
+  ],
+  hint: "Bigger divisor means slower ticks. A divisor of 65536, the maximum, gives about 18.2 Hz, the classic PC tick rate."
+});
+
+Guide.packBuilder("m-freq", {
+  title: "Work out a divisor and split it for the chip",
+  intro: "Type a divisor and see the two bytes the chip receives. 11931 gives 100 Hz, which is what the lessons use.",
+  label: "divisor:",
+  value: "11931",
+  srcBits: 16,
+  parts: [
+    { label: "first write, low byte", expr: "divisor & 0xFF", calc: function (v) { return v & 0xFF; } },
+    { label: "second write, high byte", expr: "(divisor >> 8) & 0xFF", calc: function (v) { return (v >>> 8) & 0xFF; } }
+  ],
+  hint: "Try 65535 for the slowest rate, or 1193 for 1000 Hz. Both bytes go to the same port, 0x40, one after the other."
+});
+
+Guide.bitfield("m-cmd", {
+  title: "The PIT command byte, 0x36 taken apart",
+  intro: "Four settings in one byte. Click the legend rows to see which bits each one owns.",
+  width: 8,
+  value: 0x36,
+  fields: [
+    { bits: [7, 6], name: "channel", desc: "00 selects channel 0, the one wired to IRQ0. Channels 1 and 2 went to other hardware" },
+    { bits: [5, 4], name: "access mode", desc: "11 means a 16 bit value arrives as two 8 bit writes, low byte first. The chip announcing its byte order" },
+    { bits: [3, 1], name: "operating mode", desc: "011 is mode 3, square wave. Reloads automatically and fires forever, like a metronome" },
+    { bit: 0, name: "number format", desc: "0 means the divisor is plain binary. 1 would mean BCD, which nobody uses here" }
+  ],
+  match: {
+    "54": "0x36, exactly what the lessons send. Channel 0, two byte access, square wave, binary",
+    "48": "0x30, mode 0 instead of 3. It would fire once and then stop, no automatic reload",
+    "55": "0x37, same but expecting the divisor in BCD. The divisor 11931 would be misread",
+    "22": "0x16, access mode 01 meaning low byte only. The high byte of the divisor would never arrive"
+  }
+});
+
+Guide.codeWalk("w-init", {
+  title: "Setting up the timer, from timer.cpp",
+  code: "static const uint32_t PIT_BASE = 1193182;\n\n#define PIT_CHANNEL0 0x40\n#define PIT_COMMAND  0x43\n\nvoid timer_init(uint32_t frequency) {\n    frequency_hz = frequency;\n\n    uint32_t divisor = PIT_BASE / frequency;\n\n    outb(PIT_COMMAND, 0x36);\n\n    outb(PIT_CHANNEL0, (uint8_t)(divisor & 0xFF));\n    outb(PIT_CHANNEL0, (uint8_t)((divisor >> 8) & 0xFF));\n}",
+  notes: [
+    { lines: [7, 7], text: "Remember the requested rate. Without it, a tick count cannot be converted back into seconds." },
+    { lines: [9, 9], text: "Integer division, so any remainder is dropped and the real rate is slightly off. Unavoidable, and harmless for counting ticks." },
+    { lines: [11, 11], text: "The command byte must come before the divisor. It tells the chip which channel is being configured and that two writes are coming, so sending the divisor first would be interpreted as a command." },
+    { lines: [13, 13], text: "Low byte first, exactly as the access mode bits promised. The mask keeps one byte and the cast makes the truncation explicit." },
+    { lines: [14, 14], text: "High byte second, to the same port. The chip tracks which half it is expecting, which is why two writes to one port work." },
+    { lines: [13, 14], text: "Swap these two lines and the divisor becomes 11931 with its bytes reversed, giving a wildly different tick rate with no error reported." }
+  ]
+});
+
+Guide.codeWalk("w-tick", {
+  title: "The handler, and why it is this short",
+  code: "static volatile uint32_t ticks = 0;\nstatic uint32_t frequency_hz = 0;\n\nvoid timer_tick() {\n    ticks++;\n}\n\nuint32_t timer_ticks()     { return ticks; }\nuint32_t timer_frequency() { return frequency_hz; }\n\n// and in the dispatcher, from idt.cpp:\nelse if (interrupt_number == 32) {\n    timer_tick();\n    pic_send_eoi(0);\n}",
+  notes: [
+    { lines: [1, 1], text: "volatile because the interrupt handler changes it while ordinary code reads it. Without this a loop waiting on the tick count could spin forever on a cached value." },
+    { lines: [2, 2], text: "Not volatile, because only timer_init writes it and that happens once before interrupts are even enabled." },
+    { lines: [4, 6], text: "One increment. At 100 Hz this runs a hundred times a second forever, so anything slower here would steal measurable time from the whole system." },
+    { lines: [12, 15], text: "The dispatcher branch. Count the tick, acknowledge the PIC, done. Forget the EOI and the timer fires exactly once, the same failure described on the PIC page." }
+  ]
+});
+
+Guide.packBuilder("m-ticks", {
+  title: "Ticks to seconds",
+  intro: "Type a tick count and see how long the machine has been running at 100 Hz.",
+  label: "tick count:",
+  value: "1500",
+  srcBits: 32,
+  parts: [
+    { label: "whole seconds", expr: "ticks / 100", calc: function (v) { return Math.floor(v / 100) & 0xFF; } },
+    { label: "remainder ticks", expr: "ticks % 100", calc: function (v) { return (v % 100) & 0xFF; } },
+    { label: "tenths of a second", expr: "(ticks / 10) % 10", calc: function (v) { return (Math.floor(v / 10) % 10) & 0xFF; } },
+    { label: "whole minutes", expr: "ticks / 6000", calc: function (v) { return Math.floor(v / 6000) & 0xFF; } }
+  ],
+  hint: "Only the low byte of each result is shown to keep the display readable. The formula is what matters: divide by the frequency to get seconds."
+});
+
+Guide.memMap("m-regs", {
+  title: "RTC registers, click each",
+  segments: [
+    { label: "0x00", weight: 1, addr: "seconds", desc: "0 to 59, in BCD on nearly every machine. Register 0x01 next door is the seconds alarm, which is why the useful registers are even numbered." },
+    { label: "0x02", weight: 1, addr: "minutes", desc: "0 to 59. Same BCD encoding." },
+    { label: "0x04", weight: 1, addr: "hours", desc: "0 to 23 in 24 hour mode. In 12 hour mode the top bit becomes a PM flag, which the lessons do not handle." },
+    { label: "0x07", weight: 1, addr: "day of month", desc: "1 to 31. Note the jump from 0x04, registers 0x05 and 0x06 hold the day of week and are skipped." },
+    { label: "0x08", weight: 1, addr: "month", desc: "1 to 12." },
+    { label: "0x09", weight: 1, addr: "year", desc: "Two digits only, so 2026 reads as 26. Recovering the century needs a separate register that is not standardised." },
+    { label: "0x0B", weight: 1, addr: "status register B", desc: "Not a time value. Bit 2 says whether the fields are binary or BCD, bit 1 says 12 or 24 hour. The lessons read bit 2 and assume 24 hour." }
+  ],
+  hint: "Non sequential and not derivable. These numbers come from the chip's datasheet and nowhere else."
+});
+
+Guide.codeWalk("w-read", {
+  title: "Reading the fields, from rtc.cpp",
+  code: "#define CMOS_ADDRESS 0x70\n#define CMOS_DATA    0x71\n\nstatic uint8_t read_register(uint8_t reg) {\n    outb(CMOS_ADDRESS, reg);\n    return inb(CMOS_DATA);\n}\n\nRtcTime rtc_read() {\n    RtcTime t;\n    t.second = read_register(0x00);\n    t.minute = read_register(0x02);\n    t.hour   = read_register(0x04);\n    t.day    = read_register(0x07);\n    t.month  = read_register(0x08);\n    t.year   = read_register(0x09);",
+  notes: [
+    { lines: [4, 7], text: "The address and data pattern wrapped in a helper. Select a register by writing its number, then read the value from the other port." },
+    { lines: [5, 6], text: "Order is mandatory. Reading the data port without selecting first gives whatever register was chosen last, which is a genuinely confusing bug to chase." },
+    { lines: [11, 16], text: "Six reads, twelve port operations. Each value arrives in BCD and is still wrong at this point, the conversion happens further down the function." },
+    { lines: [11, 16], text: "The register numbers are hardcoded hex rather than named constants, which is one place the lessons stayed terse. They are documented in the comments instead." }
+  ]
+});
+
+Guide.bitfield("m-bcd", {
+  title: "One BCD byte, two decimal digits",
+  intro: "Click bits and compare the two readings. The high nibble is the tens digit, the low nibble is the ones.",
+  width: 8,
+  value: 0x42,
+  fields: [
+    { bits: [7, 4], name: "tens digit", desc: "high nibble, holds 0 to 9. Values above 9 are invalid in BCD" },
+    { bits: [3, 0], name: "ones digit", desc: "low nibble, holds 0 to 9" }
+  ],
+  match: {
+    "66": "0x42, which means 42 in BCD. Read as plain binary it would be 66, wrong by 24",
+    "89": "0x59, which means 59, the highest valid seconds value. As binary it would be 89",
+    "0": "0x00, which means zero in both readings. The one value where BCD and binary agree",
+    "16": "0x10, which means 10 in BCD. As binary it would be 16",
+    "35": "0x23, which means 23, the highest valid hour. As binary it would be 35"
+  }
+});
+
+Guide.stepper("s-bcd", {
+  title: "Converting one BCD byte",
+  steps: [
+    {
+      head: "The chip returns 0x42",
+      text: "The seconds register reads 0x42. Treated as an ordinary number that is 66, which is not even a valid seconds value.",
+      state: { "raw byte": "0x42", "as binary": "66", "actually means": "42" }
+    },
+    {
+      head: "Mask off the low nibble",
+      text: "Keeping the bottom four bits gives the ones digit directly.",
+      code: "value & 0x0F      // 0x42 & 0x0F = 2",
+      state: { "ones digit": "2" }
+    },
+    {
+      head: "Shift down to get the tens nibble",
+      text: "Shifting right by four brings the high nibble to the bottom, giving the tens digit as a small number.",
+      code: "value >> 4        // 0x42 >> 4 = 4",
+      state: { "tens digit": "4" }
+    },
+    {
+      head: "Multiply the tens and add",
+      text: "Four tens plus two ones is forty two. The conversion is one line once you see it as two separate digits.",
+      code: "(value & 0x0F) + ((value >> 4) * 10)\n// 2 + (4 * 10) = 42",
+      state: { "result": "42, correct" }
+    },
+    {
+      head: "Repeat for every field",
+      text: "Seconds, minutes, hours, day, month and year all arrive in BCD, so all six need converting. Skipping any one gives a plausible looking but wrong value.",
+      state: { "fields converted": "6" }
+    }
+  ],
+  hint: "This is exactly the nibble extraction from the bits page. Mask for the low half, shift then use the high half."
+});
+
+Guide.codeWalk("w-bcd", {
+  title: "The conversion, from rtc.cpp",
+  code: "static uint8_t bcd_to_binary(uint8_t value) {\n    return (value & 0x0F) + ((value >> 4) * 10);\n}",
+  notes: [
+    { lines: [2, 2], text: "The left half of the expression masks to the low nibble, giving the ones digit as a value from 0 to 9." },
+    { lines: [2, 2], text: "The right half shifts down four to get the tens nibble, then multiplies by ten to give it the right place value." },
+    { lines: [2, 2], text: "Addition, not OR. These are decimal place values being summed, not bit patterns being combined, which is a different operation from most of the bit work in the lessons." },
+    { lines: [1, 3], text: "It only handles two digits, which is all any RTC field holds. Feeding it a nibble above 9 would produce nonsense, but the chip never returns one." }
+  ]
+});
+
+Guide.codeWalk("w-status", {
+  title: "Checking the format first, from rtc.cpp",
+  code: "uint8_t status = read_register(0x0B);\nbool is_bcd = !(status & 0x04);   // bit 2 clear means BCD\n\nif (is_bcd) {\n    t.second = bcd_to_binary(t.second);\n    t.minute = bcd_to_binary(t.minute);\n    t.hour   = bcd_to_binary(t.hour);\n    t.day    = bcd_to_binary(t.day);\n    t.month  = bcd_to_binary(t.month);\n    t.year   = bcd_to_binary(t.year);\n}",
+  notes: [
+    { lines: [1, 1], text: "Register 0x0B is status register B. It holds configuration rather than a time value, read through the same address and data pair." },
+    { lines: [2, 2], text: "Mask bit 2 to isolate the format flag. The bit set means binary mode, so BCD is the bit being clear, hence the negation." },
+    { lines: [2, 2], text: "The double inversion reads awkwardly but is correct. Naming the result is_bcd rather than testing inline is what keeps it readable." },
+    { lines: [4, 11], text: "Only convert if the chip really is in BCD mode. Converting an already binary value would corrupt it, turning 42 into something meaningless." },
+    { lines: [4, 11], text: "In practice nearly every machine and emulator uses BCD, so this branch always runs. Checking rather than assuming costs one port read." }
+  ]
+});
+
+Guide.quiz("q-cmd", {
+  question: "The command byte 0x36 has bits 5 and 4 set to 11. What does that tell the chip?",
+  options: [
+    { text: "A 16 bit divisor is coming as two 8 bit writes, low byte first", correct: true, why: "Right. The data port is only 8 bits wide, so a 16 bit divisor needs two writes. The access mode bits tell the chip to expect both and which order they arrive in. Setting mode 01 instead would mean low byte only, and the high byte would never register." },
+    { text: "Channel 1 is being configured", why: "That is bits 7 and 6, which are 00 here selecting channel 0. Channel 0 is the one wired to IRQ0." },
+    { text: "Square wave mode", why: "That is bits 3 to 1, which are 011 for mode 3. A different field of the same byte." },
+    { text: "The divisor is in BCD", why: "That is bit 0, which is clear here meaning plain binary. BCD divisors would be unusual." }
+  ]
+});
+
+Guide.quiz("q-volatile", {
+  question: "Why is ticks declared volatile but frequency_hz is not?",
+  options: [
+    { text: "ticks is changed by the interrupt handler while other code reads it, frequency_hz is written once before interrupts are enabled", correct: true, why: "Correct. The compiler cannot see that an interrupt modifies ticks, so without volatile it could cache the value and a waiting loop would never see it change. frequency_hz is set by timer_init before sti runs and never touched again, so there is no concurrent change to worry about." },
+    { text: "volatile is only needed on counters", why: "It is needed on anything that changes outside the compiler's view. A counter is just the common case." },
+    { text: "frequency_hz is const", why: "It is a plain static variable that timer_init assigns. Not const, just never modified after setup." },
+    { text: "ticks is larger, so it needs volatile to stay consistent", why: "Both are uint32_t. Size is irrelevant, what matters is who writes it and when." }
+  ]
+});
+
+Guide.quiz("q-bcd", {
+  question: "The RTC returns 0x59 for the seconds and you forget to convert. What appears on screen?",
+  options: [
+    { text: "89, because 0x59 read as binary is 89", correct: true, why: "Right. 0x59 is 0101 1001, which as an ordinary number is 89. In BCD it means 59. The printed time would show 89 seconds, which is impossible and the clue that a conversion is missing." },
+    { text: "59, since the hex digits already read as the right number", why: "They read that way to a human looking at hex, but print_int works on the numeric value, which is 89." },
+    { text: "0x59 as text", why: "print_int converts a number to decimal digits. It has no concept of hex formatting." },
+    { text: "A garbage value, since the byte is not a valid number", why: "It is a perfectly valid byte. The problem is interpreting a BCD encoding as plain binary, giving a wrong but well defined answer." }
+  ]
+});
+
+Guide.quiz("q-status", {
+  question: "Why is the BCD check written as !(status & 0x04) rather than (status & 0x04)?",
+  options: [
+    { text: "Bit 2 set means binary mode, so BCD is indicated by the bit being clear", correct: true, why: "Correct. The chip's flag says binary when set, and BCD is the default when clear. Since the code wants to know whether conversion is needed, it negates the test. Dropping the negation would convert only on machines that do not need it." },
+    { text: "The negation converts the result to a bool", why: "The comparison result is already usable as a bool. The negation is about the flag's meaning, not its type." },
+    { text: "Because 0x04 is the wrong mask and the negation compensates", why: "0x04 correctly isolates bit 2. The mask is right and the negation reflects what that bit means." },
+    { text: "To handle the case where the register read fails", why: "There is no failure signal from a port read. It always returns something." }
+  ]
+});
+</script>
+</body>
+</html>

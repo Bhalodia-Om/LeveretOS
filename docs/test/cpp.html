@@ -1,0 +1,322 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>C++ without a system, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Foundations</div>
+      <h1>C++ without a system</h1>
+      <p class="lede">Writing a kernel means writing C++ with nothing underneath it. No standard library, no operating system, no safety net. Several familiar things stop working and a few unfamiliar ones become essential.</p>
+
+      <h2>What you lose</h2>
+      <p>
+        Normally your program sits on top of an operating system that provides a huge amount for
+        free. In a kernel there is nothing below you, so all of that vanishes at once.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Gone</th><th>Why</th><th>What the lessons do</th></tr></thead>
+        <tbody>
+          <tr><td><code>cout</code>, <code>printf</code></td><td>they ask the OS to write to a console, and there is no OS</td><td>write characters straight into video memory</td></tr>
+          <tr><td><code>new</code>, <code>malloc</code></td><td>they ask the OS for memory</td><td>build a heap by hand, lesson 16</td></tr>
+          <tr><td><code>std::string</code>, <code>vector</code></td><td>they allocate, so they need a heap that does not exist yet</td><td>plain arrays with fixed sizes</td></tr>
+          <tr><td>exceptions, <code>try</code>, <code>catch</code></td><td>they need runtime support code that is not linked in</td><td>compiled out with <code>-fno-exceptions</code></td></tr>
+          <tr><td><code>strlen</code>, <code>memcpy</code></td><td>part of the standard library</td><td>written from scratch, lesson 5</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        This is what freestanding means. The build script says so explicitly, and each flag turns off
+        a feature that would otherwise expect a system to be there.
+      </p>
+
+      <div id="w-flags"></div>
+
+      <h2>Fixed width integer types</h2>
+      <p>
+        In ordinary C++ you write <code>int</code> and do not think about it. In a kernel you almost
+        never write <code>int</code>, because the exact number of bits matters enormously.
+      </p>
+      <p>
+        A hardware register is precisely 8 or 16 or 32 bits wide. A struct describing a GDT entry has
+        to match a layout the CPU decided on. If your field is the wrong size, every field after it
+        shifts and the whole thing is garbage. So the lessons use types that state their width.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Type</th><th>Bits</th><th>Typical use in the lessons</th></tr></thead>
+        <tbody>
+          <tr><td><code>uint8_t</code></td><td>8</td><td>one byte, a port value, a MAC byte, a scancode</td></tr>
+          <tr><td><code>uint16_t</code></td><td>16</td><td>a port number, an EtherType, a VGA screen cell</td></tr>
+          <tr><td><code>uint32_t</code></td><td>32</td><td>an address, a page table entry, a PCI config word</td></tr>
+          <tr><td><code>size_t</code></td><td>32 here</td><td>a count or a length, widens automatically on 64 bit</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        The <code>u</code> means unsigned, no negative values. That matters for addresses and bit
+        patterns: bit 31 of a signed 32 bit number is the sign bit, so setting it would make the
+        number negative rather than large. The paging code sets exactly that bit to enable paging,
+        which is why it uses unsigned types throughout.
+      </p>
+
+      <h2>Structs as a memory layout</h2>
+      <p>
+        A struct in a kernel is often not a convenience container. It is a description of bytes that
+        already exist somewhere, or that hardware will read.
+      </p>
+      <p>
+        When the PMM reads GRUB's memory map, GRUB has already written those bytes into RAM. The
+        struct just tells the compiler how to interpret them.
+      </p>
+
+      <div id="w-cast"></div>
+
+      <p>
+        No copying happens. The cast says "treat the bytes at this address as a MultibootInfo", and
+        reading a field compiles to a read at the right offset. This is the standard way to work with
+        data another piece of software or hardware laid down.
+      </p>
+
+      <h2>Packed, and why padding would ruin everything</h2>
+      <p>
+        Compilers normally insert invisible padding between struct fields so each one sits on a
+        convenient address boundary. That makes access faster and is completely fine, until the
+        struct has to match an exact hardware layout.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">What padding would do to a GDT entry</div>
+        <div class="st-code">struct GdtEntry {
+    uint16_t limit_low;    // 2 bytes
+    uint16_t base_low;     // 2 bytes
+    uint8_t  base_mid;     // 1 byte
+    uint8_t  access;       // 1 byte
+    uint8_t  granularity;  // 1 byte
+    uint8_t  base_high;    // 1 byte
+};                         // should be exactly 8 bytes
+
+// without packed, a compiler may quietly make it 10 or 12 bytes
+// by inserting gaps. The CPU then reads the wrong fields and
+// the segment description is nonsense.</div>
+        <div class="hint">__attribute__((packed)) forbids the gaps. Every field sits exactly where the CPU expects it.</div>
+      </div>
+
+      <p>
+        You will see <code>packed</code> on every struct in the lessons that describes something
+        outside your own program: GDT entries, IDT entries, the multiboot structs. Structs used only
+        internally, like the heap's block header, do not need it.
+      </p>
+
+      <div id="q-packed"></div>
+
+      <h2>Volatile</h2>
+      <p>
+        This one is subtle and causes real bugs. The compiler is allowed to optimise away reads it
+        thinks are pointless. If you read a variable twice in a loop and nothing in the loop changes
+        it, the compiler may read it once and reuse the value.
+      </p>
+      <p>
+        That is a sound assumption for normal variables and completely wrong for anything an
+        interrupt handler touches, because the handler changes it behind the compiler's back.
+      </p>
+
+      <div id="w-volatile"></div>
+
+      <p>
+        The keyboard driver has the same situation. <code>line_ready</code> is set inside the
+        interrupt handler and read by <code>read_line</code>, which sits in a loop waiting for it.
+        Without <code>volatile</code> the compiler could hoist the read out of the loop and spin
+        forever on a stale value.
+      </p>
+
+      <div class="box warn">
+        <span class="t">The symptom</span>
+        A missing <code>volatile</code> usually shows up as a hang, or as code that works at one
+        optimisation level and breaks at another. Nothing crashes and no error appears, which makes
+        it genuinely nasty to track down.
+      </div>
+
+      <h2>Pointers as plain addresses</h2>
+      <p>
+        In a kernel a pointer is just a number that happens to be a memory address, and you write
+        them out by hand all the time. The VGA driver is the clearest example.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">From the VGA driver</div>
+        <div class="st-code">static uint16_t* const VGA_MEMORY = reinterpret_cast&lt;uint16_t*&gt;(0xB8000);</div>
+        <div class="hint">0xB8000 is not a variable anywhere. It is a fixed address the video hardware watches. The cast says treat that address as an array of 16 bit cells.</div>
+      </div>
+
+      <p>
+        After that line, <code>VGA_MEMORY[0]</code> is the top left character cell on screen. Writing
+        to it changes the display. There is no function call and no driver in between, you are
+        writing to a place the hardware is reading from.
+      </p>
+
+      <h2>Output parameters</h2>
+      <p>
+        With no <code>std::pair</code> or tuples available, and functions only able to return one
+        value, the lessons hand back extra results by writing through pointers the caller supplies.
+      </p>
+
+      <div id="w-out"></div>
+
+      <p>
+        The caller creates the storage, passes its address, and the function fills it in. The
+        <code>&amp;</code> in front of a variable means "the address of this", which is a different
+        operator from the bitwise AND between two values covered on the
+        <a href="bits.html">bits page</a>.
+      </p>
+
+      <div id="q-amp"></div>
+
+      <h2>Static and extern</h2>
+      <p>
+        These two keywords control who can see a name, and the lessons use them deliberately.
+      </p>
+      <p>
+        <code>static</code> at file scope means private to this file. The NE2000 driver's
+        <code>io_base</code> is static, so no other file can reach in and change the card's port
+        address. It is the closest thing to encapsulation available here.
+      </p>
+      <p>
+        <code>extern</code> means this exists somewhere else, do not create another one. The VGA
+        header declares <code>extern size_t cursor_row;</code> so every file shares one cursor
+        position rather than each getting its own copy.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">extern "C" and name mangling</div>
+        <div class="st-code">extern "C" void gdt_flush(uint32_t gdt_ptr_address);</div>
+        <div class="hint">C++ normally decorates function names to allow overloading, turning gdt_flush into something like _Z9gdt_flushj. The assembly file only knows the plain name, so extern "C" turns the decoration off.</div>
+      </div>
+
+      <p>
+        Every function that crosses between C++ and assembly needs this: <code>gdt_flush</code>,
+        <code>interrupt_handler</code>, <code>kernel_main</code>, and the interrupt stubs. Forget it
+        and the linker cannot find the symbol.
+      </p>
+
+      <h2>Inline assembly</h2>
+      <p>
+        Some CPU instructions have no C++ equivalent. You cannot ask C++ to read a control register
+        or load the interrupt table, so those few lines are written in assembly inside the C++ file.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">Reading a port, from io.h</div>
+        <div class="st-code">static inline uint8_t inb(uint16_t port) {
+    uint8_t result;
+    asm volatile ("inb %1, %0" : "=a"(result) : "Nd"(port));
+    return result;
+}</div>
+        <div class="hint">The quoted part is the instruction. After the first colon are outputs, after the second are inputs. "=a" means the result comes back in the accumulator register, "Nd" means the port can be a constant or go in the DX register.</div>
+      </div>
+
+      <p>
+        The constraint letters look cryptic but there are only a handful in the whole project. Note
+        that <code>volatile</code> appears here too, for the same reason as before: this instruction
+        has a side effect on hardware, so the compiler must not decide it is unnecessary and drop it.
+      </p>
+
+      <div class="box info">
+        <span class="t">Worth knowing</span>
+        <code>"=a"</code> means the accumulator register, but which one depends on the variable's
+        type. With a <code>uint8_t</code> it is the 8 bit <code>AL</code>, with a
+        <code>uint32_t</code> it is the full 32 bit <code>EAX</code>. Same constraint, different
+        register, chosen automatically from the type. That is why <code>inb</code> and
+        <code>inl</code> look nearly identical.
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("cpp");
+
+Guide.codeWalk("w-flags", {
+  title: "The compiler flags, and what each one removes",
+  code: 'CXXFLAGS="-m32 -ffreestanding -fno-exceptions -fno-rtti \\\n          -fno-stack-protector -fno-pie -nostdlib \\\n          -Wall -Wextra"',
+  notes: [
+    { lines: [1, 1], text: "-m32 builds 32 bit code. The whole OS runs in 32 bit protected mode, so the compiler has to match." },
+    { lines: [1, 1], text: "-ffreestanding tells the compiler there is no standard library and no operating system. It stops assuming things like main() being the real entry point." },
+    { lines: [1, 1], text: "-fno-exceptions removes try and catch. Exception handling needs runtime support code that does not exist here." },
+    { lines: [1, 1], text: "-fno-rtti removes runtime type information, used by dynamic_cast and typeid. Also needs runtime support we do not have." },
+    { lines: [2, 2], text: "-fno-stack-protector removes stack checking code that would call into a library function we cannot provide." },
+    { lines: [2, 2], text: "-fno-pie disables position independent code. Our kernel is loaded at a known fixed address, 1 MB, so it does not need to be relocatable." },
+    { lines: [2, 2], text: "-nostdlib stops the linker pulling in the standard library and the normal C startup code." },
+    { lines: [3, 3], text: "-Wall -Wextra turn on warnings. With no debugger and no runtime safety net, a warning at compile time is worth a great deal." }
+  ],
+  hint: "Every flag here either removes something that needs an OS, or catches mistakes earlier."
+});
+
+Guide.codeWalk("w-cast", {
+  title: "Reading bytes somebody else wrote",
+  code: 'void pmm_init(uint32_t multiboot_info_addr) {\n    MultibootInfo* mboot = (MultibootInfo*)multiboot_info_addr;\n\n    uint32_t offset = 0;\n    while (offset < mboot->mmap_length) {\n        MultibootMmapEntry* entry =\n            (MultibootMmapEntry*)(mboot->mmap_addr + offset);\n        if (entry->type == MULTIBOOT_MEMORY_AVAILABLE) {\n            // this region is usable RAM\n        }\n        offset += entry->size + 4;\n    }\n}',
+  notes: [
+    { lines: [1, 1], text: "The address arrives as a plain number. GRUB left it in a register and boot.s pushed it onto the stack for us." },
+    { lines: [2, 2], text: "The cast reinterprets that number as a pointer to our struct. No data moves, we are just choosing how to read bytes that already exist." },
+    { lines: [5, 5], text: "mmap_length is a field inside those bytes. Because the struct is packed and matches GRUB's layout exactly, this reads the right four bytes." },
+    { lines: [6, 7], text: "The memory map is a list, so we compute the address of each entry and cast again. Pointer arithmetic on a plain uint32_t, then reinterpret." },
+    { lines: [11, 11], text: "Each entry carries its own size, so we step forward by that amount. The + 4 accounts for the size field itself not being counted, a quirk of the multiboot spec." }
+  ]
+});
+
+Guide.codeWalk("w-volatile", {
+  title: "Why volatile is not optional here",
+  code: 'static volatile uint32_t ticks = 0;\n\nvoid timer_tick() {\n    ticks++;          // called from the interrupt handler\n}\n\n// somewhere else, waiting for time to pass:\nwhile (ticks < target) {\n    // without volatile the compiler may read ticks ONCE,\n    // decide it never changes, and loop forever\n}',
+  notes: [
+    { lines: [1, 1], text: "volatile tells the compiler this value can change at any moment for reasons it cannot see in the code." },
+    { lines: [3, 5], text: "The interrupt handler increments it. From the compiler's point of view nothing calls this function, because the CPU calls it in response to hardware." },
+    { lines: [8, 11], text: "The loop reads ticks but never writes it. A normal optimiser would read once and reuse the value, which turns this into an infinite loop. volatile forces a fresh read every time." }
+  ],
+  hint: "The timer and the keyboard both share state with interrupt handlers, and both mark it volatile."
+});
+
+Guide.codeWalk("w-out", {
+  title: "Returning more than one value",
+  code: 'uint16_t eth_receive(uint8_t src_mac_out[6],\n                    uint16_t* ethertype_out,\n                    uint8_t** payload_out) {\n    // ...\n    for (int i = 0; i < 6; i++) src_mac_out[i] = rx_frame[6 + i];\n    *ethertype_out = ((uint16_t)rx_frame[12] << 8) | rx_frame[13];\n    *payload_out = &rx_frame[ETH_HEADER_LEN];\n    return total - ETH_HEADER_LEN;\n}\n\n// the caller:\nuint8_t  src_mac[6];\nuint16_t ethertype;\nuint8_t* payload;\nuint16_t len = eth_receive(src_mac, &ethertype, &payload);',
+  notes: [
+    { lines: [1, 3], text: "One return value is not enough, so three results come back through parameters. The star on the type means it is a pointer to the caller's variable." },
+    { lines: [5, 5], text: "An array parameter is already a pointer to its first element, so no star is needed and no & at the call site." },
+    { lines: [6, 6], text: "The star here means follow the pointer and store there. This writes into the caller's ethertype variable." },
+    { lines: [7, 7], text: "A double star, a pointer to a pointer. We are setting the caller's pointer to point into our buffer, so no bytes get copied." },
+    { lines: [15, 15], text: "The & takes the address of each variable. This is address of, not bitwise AND, you can tell because it sits in front of one thing rather than between two." }
+  ]
+});
+
+Guide.quiz("q-packed", {
+  question: "Which of these structs genuinely needs __attribute__((packed))?",
+  options: [
+    { text: "GdtEntry, because the CPU reads it directly", correct: true, why: "Right. The CPU expects exactly 8 bytes in a fixed layout. Any padding shifts the fields and the descriptor becomes meaningless." },
+    { text: "BlockHeader in the heap", why: "That one is only ever read by our own code, so the compiler can lay it out however it likes. The heap even relies on sizeof telling it the real size." },
+    { text: "RtcTime, holding the hours and minutes", why: "Purely internal. Nothing outside the OS reads it, so padding is harmless." },
+    { text: "PciDevice, holding a bus and device number", why: "Also internal, just a way to return two numbers from a function." }
+  ]
+});
+
+Guide.quiz("q-amp", {
+  question: "In eth_receive(src_mac, &ethertype, &payload), what does the & do?",
+  options: [
+    { text: "Takes the address of each variable, so the function can write into them", correct: true, why: "Correct. That is the address of operator. The function receives pointers and writes through them, which is how it returns three results when C++ only allows one return value." },
+    { text: "Performs a bitwise AND on the variables", why: "Bitwise AND sits between two values, like value & 0xFF. A single & in front of one variable means address of." },
+    { text: "Marks the parameters as read only", why: "Read only would be const. The & is the opposite intent here, these parameters exist specifically to be written to." },
+    { text: "Copies the variables so the original cannot change", why: "Passing by value copies. Passing an address deliberately avoids copying so changes reach the caller." }
+  ]
+});
+</script>
+</body>
+</html>

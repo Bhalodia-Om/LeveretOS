@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>VGA text mode, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Getting on screen</div>
+      <h1>VGA text mode</h1>
+      <p class="lede">There is no print function and no graphics driver. You put characters on screen by writing numbers into a specific range of memory, and the hardware turns them into pixels for you.</p>
+
+      <h2>A screen that is just memory</h2>
+      <p>
+        The video hardware is constantly reading a block of memory starting at address
+        <code>0xB8000</code> and drawing whatever it finds there. You do not ask it to draw. You change
+        the memory, and the next time it refreshes, the screen has changed.
+      </p>
+      <p>
+        That block is 80 columns by 25 rows, which is 2000 character cells. Each cell takes two bytes,
+        so the whole screen is 4000 bytes. Writing to cell zero changes the top left character.
+      </p>
+
+      <div id="w-ptr"></div>
+
+      <p>
+        This is memory mapped hardware. The address is not RAM you own, it is a window onto a device.
+        Reading it gives you what is on screen, writing it changes the display. No function call
+        involved.
+      </p>
+
+      <div class="box info">
+        <span class="t">Why 0xB8000 specifically</span>
+        It is a legacy address fixed by the original IBM PC design and honoured by every PC since. The
+        first megabyte of memory is full of these reserved windows, which is exactly why the linker
+        script loads the kernel above it at 1 MB.
+      </div>
+
+      <h2>Two bytes per character</h2>
+      <p>
+        One byte holds the character, the other holds its colour. The lessons combine them into a
+        single 16 bit value, which is why <code>VGA_MEMORY</code> is a <code>uint16_t*</code> rather
+        than a byte pointer.
+      </p>
+
+      <div id="m-cell"></div>
+
+      <p>
+        The character goes in the low byte and the colour in the high byte. Building that value is a
+        shift and an OR, the same packing pattern as everywhere else in the lessons.
+      </p>
+
+      <div id="w-entry"></div>
+
+      <h2>The colour byte holds two colours</h2>
+      <p>
+        One byte, two four bit halves. The low nibble is the foreground colour and the high nibble is
+        the background. Four bits give sixteen choices each.
+      </p>
+
+      <div id="m-color"></div>
+
+      <p>
+        The lessons only define black and white, because the OS never needed more. But the full
+        sixteen colour palette is there in hardware and available by passing different numbers.
+      </p>
+
+      <div id="q-color"></div>
+
+      <h2>From a row and column to an index</h2>
+      <p>
+        The screen is two dimensional but memory is a flat line. Converting between them is one
+        multiply and one add, and this formula appears in every function in the driver.
+      </p>
+
+      <div id="m-index"></div>
+
+      <p>
+        Multiply the row by the width to skip whole rows, then add the column to move along the current
+        row. Getting the width wrong here is a classic bug: text appears diagonally, because each row
+        starts slightly offset from where it should.
+      </p>
+
+      <div id="q-index"></div>
+
+      <h2>Scrolling by moving memory</h2>
+      <p>
+        When text reaches the bottom row there is nowhere left to write. Scrolling means shifting every
+        row up by one and clearing the bottom row, and since the screen is just memory, that is a
+        single copy.
+      </p>
+
+      <div id="s-scroll"></div>
+
+      <p>
+        The copy length is worth reading carefully. It moves <code>VGA_HEIGHT - 1</code> rows, not all
+        25, because the top row is being discarded and there is no row below the last one to pull from.
+        Copy one row too many and you read past the end of the video buffer.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">The scroll, from vga.cpp</div>
+        <div class="st-code">memcpy(VGA_MEMORY,
+       VGA_MEMORY + VGA_WIDTH,
+       (VGA_HEIGHT - 1) * VGA_WIDTH * sizeof(uint16_t));</div>
+        <div class="hint">Destination is row 0, source is row 1, length is 24 rows worth of 16 bit cells. Note that adding VGA_WIDTH to a uint16_t pointer advances by 80 cells, not 80 bytes, because pointer arithmetic scales by the pointed to type.</div>
+      </div>
+
+      <div class="box warn">
+        <span class="t">Pointer arithmetic scales</span>
+        <code>VGA_MEMORY + VGA_WIDTH</code> moves forward 80 <em>cells</em>, which is 160 bytes,
+        because the pointer is <code>uint16_t*</code>. If it were a <code>uint8_t*</code> the same
+        expression would move only 80 bytes and land in the middle of row zero. The
+        <code>sizeof(uint16_t)</code> in the length is there because memcpy counts raw bytes and does
+        not scale anything.
+      </div>
+
+      <h2>Handling the special characters</h2>
+      <p>
+        Most characters just get written to the current cell. Three do not, and each needs its own
+        branch in <code>putchar</code>.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Character</th><th>What happens instead</th></tr></thead>
+        <tbody>
+          <tr><td><code>'\n'</code></td><td>column back to zero, row advances, scroll if that ran off the bottom</td></tr>
+          <tr><td><code>'\b'</code></td><td>step back one cell, possibly to the end of the previous row, then write a space over it</td></tr>
+          <tr><td>anything else</td><td>write the cell, advance the column, wrap to the next row at column 80</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        Backspace is the fiddly one, because erasing is not the same as moving. The cursor has to go
+        back, then a space is written to actually clear the character, and the cursor stays there so
+        the next keystroke overwrites it. The lessons handle the case where backspace happens at column
+        zero by stepping up to the end of the previous row.
+      </p>
+
+      <div id="w-putchar"></div>
+
+      <h2>Printing a number</h2>
+      <p>
+        There is no <code>printf</code>, so turning an integer into digits is hand written. The
+        algorithm produces digits in the wrong order, which is the interesting part.
+      </p>
+
+      <div id="s-printint"></div>
+
+      <p>
+        Taking the remainder mod 10 always gives you the <em>last</em> digit. So the digits come out
+        backwards and have to be buffered, then printed in reverse. Adding <code>'0'</code> converts a
+        digit value into its character, because the ASCII codes for the digits are consecutive.
+      </p>
+
+      <div id="q-digit"></div>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("vga");
+
+Guide.codeWalk("w-ptr", {
+  title: "Pointing at the screen, from vga.cpp",
+  code: "static uint16_t* const VGA_MEMORY =\n    reinterpret_cast<uint16_t*>(0xB8000);\n\nstatic const size_t VGA_WIDTH  = 80;\nstatic const size_t VGA_HEIGHT = 25;",
+  notes: [
+    { lines: [1, 2], text: "A plain number becomes a pointer. reinterpret_cast is the explicit way of saying treat this address as a pointer to 16 bit values, and it is doing no conversion at all, just changing how the compiler types it." },
+    { lines: [1, 1], text: "uint16_t because each character cell is two bytes. That choice makes VGA_MEMORY[n] address cell n directly, with no multiplying by two anywhere." },
+    { lines: [1, 1], text: "static keeps the name private to this file. const on the pointer itself means the pointer cannot be reassigned, though the memory it points at is very much writable." },
+    { lines: [4, 5], text: "The screen dimensions as named constants. Every index calculation uses VGA_WIDTH, so if these were wrong the whole display would be skewed." }
+  ]
+});
+
+Guide.memMap("m-cell", {
+  title: "One character cell, click each half",
+  segments: [
+    { label: "low byte, the character", weight: 1, addr: "bits 0 to 7", desc: "The ASCII code of the character to draw. 0x41 is a capital A, 0x20 is a space. This is the byte you get from a char in C++." },
+    { label: "high byte, the colour", weight: 1, addr: "bits 8 to 15", desc: "Foreground colour in the low nibble, background colour in the high nibble. Two colours packed into one byte." }
+  ],
+  hint: "2000 of these side by side, 80 across and 25 down, starting at 0xB8000."
+});
+
+Guide.codeWalk("w-entry", {
+  title: "Packing a cell, from vga.h",
+  code: "static inline uint8_t make_color(uint8_t fg, uint8_t bg) {\n    return fg | (bg << 4);\n}\n\nstatic inline uint16_t make_entry(char c, uint8_t color) {\n    return static_cast<uint16_t>(c)\n         | (static_cast<uint16_t>(color) << 8);\n}",
+  notes: [
+    { lines: [2, 2], text: "Foreground goes in the low four bits as is. Background shifts up four so it lands in the high nibble. One OR joins them with no overlap." },
+    { lines: [6, 6], text: "The character cast to 16 bits sits in the low byte. Casting first matters, shifting an 8 bit value by 8 could lose it entirely." },
+    { lines: [7, 7], text: "The colour shifts up 8 bits into the high byte. The result is one 16 bit value ready to write straight into video memory." },
+    { lines: [1, 1], text: "inline in the header means the compiler pastes the code in at each call site rather than making a real function call. For a two line helper called thousands of times that matters." }
+  ],
+  hint: "Same shift and OR pattern as the endianness page, just packing rather than splitting."
+});
+
+Guide.bitfield("m-color", {
+  title: "The colour byte, click the bits",
+  intro: "Low nibble is the foreground, high nibble is the background. Try building 0x0F, white on black, which is what the lessons use.",
+  width: 8,
+  value: 15,
+  fields: [
+    { bits: [7, 4], name: "background", desc: "high nibble, 0 to 15. Bit 7 was originally a blink flag on real hardware" },
+    { bits: [3, 0], name: "foreground", desc: "low nibble, 0 to 15. 0 is black, 15 is bright white, 4 is red" }
+  ],
+  match: {
+    "15": "0x0F, bright white text on a black background. This is make_color(VGA_WHITE, VGA_BLACK)",
+    "0": "0x00, black on black. Text would be invisible",
+    "240": "0xF0, black text on a white background, an inverted look",
+    "4": "0x04, dark red text on black",
+    "10": "0x0A, bright green on black, close to the accent colour on this site"
+  }
+});
+
+Guide.packBuilder("m-index", {
+  title: "Row and column to a flat index",
+  intro: "Type a row number from 0 to 24 and watch where that row begins in memory.",
+  label: "row:",
+  value: "3",
+  srcBits: 16,
+  parts: [
+    { label: "index of column 0", expr: "row * 80", calc: function (r) { return (r * 80) & 0xFF; } },
+    { label: "index of column 40", expr: "row * 80 + 40", calc: function (r) { return (r * 80 + 40) & 0xFF; } },
+    { label: "byte offset, low", expr: "(row*80*2) & 0xFF", calc: function (r) { return (r * 160) & 0xFF; } },
+    { label: "byte offset, high", expr: "(row*80*2) >> 8", calc: function (r) { return ((r * 160) >> 8) & 0xFF; } }
+  ],
+  hint: "The formula in the code is cursor_row * VGA_WIDTH + cursor_col. The byte offset is twice the cell index, because each cell is two bytes, but the code never needs that since the pointer is uint16_t."
+});
+
+Guide.stepper("s-scroll", {
+  title: "Scrolling the screen, step by step",
+  steps: [
+    {
+      head: "The cursor runs off the bottom",
+      text: "putchar has just advanced the row past the last valid one. There is no row 25, so something has to give.",
+      state: { "cursor_row": "25", "VGA_HEIGHT": "25", "problem": "row 25 does not exist" }
+    },
+    {
+      head: "Copy rows 1 to 24 up by one row",
+      text: "One memcpy does the whole job. The destination is the start of the buffer, the source is one row in, so everything slides up and row 0 is overwritten and lost.",
+      code: "memcpy(VGA_MEMORY,\n       VGA_MEMORY + VGA_WIDTH,\n       (VGA_HEIGHT - 1) * VGA_WIDTH * sizeof(uint16_t));",
+      state: { "rows moved": "24", "row 0": "discarded" }
+    },
+    {
+      head: "The bottom row now holds a stale copy",
+      text: "After the copy, row 24 still contains what row 24 had before, because nothing was copied into it. It has to be cleared by hand.",
+      state: { "row 24": "stale duplicate" }
+    },
+    {
+      head: "Fill the bottom row with spaces",
+      text: "Write a space in the current colour to every column of the last row. Now it is genuinely blank.",
+      code: "for (size_t col = 0; col < VGA_WIDTH; col++) {\n    VGA_MEMORY[(VGA_HEIGHT - 1) * VGA_WIDTH + col]\n        = make_entry(' ', text_color);\n}",
+      state: { "row 24": "blank" }
+    },
+    {
+      head: "Put the cursor back on the last row",
+      text: "The caller sets the row to the last valid one, so the next character lands on the freshly cleared line.",
+      code: "cursor_row = VGA_HEIGHT - 1;",
+      state: { "cursor_row": "24", "result": "text continues at the bottom" }
+    }
+  ],
+  hint: "Because the screen is memory, scrolling is a copy. No hardware command and no driver call involved."
+});
+
+Guide.codeWalk("w-putchar", {
+  title: "Backspace, the awkward case",
+  code: "if (c == '\\b') {\n    if (cursor_col > 0) {\n        cursor_col--;\n    } else if (cursor_row > 0) {\n        cursor_row--;\n        cursor_col = VGA_WIDTH - 1;\n    }\n    const size_t index = cursor_row * VGA_WIDTH + cursor_col;\n    VGA_MEMORY[index] = make_entry(' ', text_color);\n    return;\n}",
+  notes: [
+    { lines: [2, 3], text: "The normal case, just step one column left." },
+    { lines: [4, 6], text: "At column zero there is nothing to the left on this row, so go up a row and jump to its last column. Without this, backspace would stop working at the start of every line." },
+    { lines: [4, 4], text: "The cursor_row > 0 check stops it going above the top of the screen. At row 0 column 0 the backspace is simply ignored." },
+    { lines: [8, 9], text: "Moving the cursor is not enough, the old character is still drawn. Writing a space actually erases it." },
+    { lines: [9, 9], text: "The cursor stays on this cell rather than advancing, so the next typed character overwrites the space. That is what makes it feel like editing." }
+  ],
+  hint: "The keyboard driver sends '\\b' when backspace is pressed, and this is what makes it visible."
+});
+
+Guide.stepper("s-printint", {
+  title: "Turning 407 into three characters",
+  steps: [
+    {
+      head: "Start with the number",
+      text: "There is no printf, so digits have to be extracted one at a time using division and remainder.",
+      state: { "value": "407", "digits[]": "empty", "count": "0" }
+    },
+    {
+      head: "Take the remainder mod 10",
+      text: "407 mod 10 is 7, the last digit. Remainder always gives the least significant digit, which is why the result comes out backwards.",
+      code: "digits[count] = '0' + (value % 10);\nvalue = value / 10;\ncount++;",
+      state: { "value": "40", "digits[]": "'7'", "count": "1" }
+    },
+    {
+      head: "Again on what is left",
+      text: "40 mod 10 is 0, and integer division drops the remainder so 40 becomes 4.",
+      state: { "value": "4", "digits[]": "'7', '0'", "count": "2" }
+    },
+    {
+      head: "And once more",
+      text: "4 mod 10 is 4, then 4 divided by 10 is 0, which ends the loop.",
+      state: { "value": "0", "digits[]": "'7', '0', '4'", "count": "3" }
+    },
+    {
+      head: "Print the buffer in reverse",
+      text: "The digits are stored backwards, so walking the array from the end forwards puts them in the right order on screen.",
+      code: "for (int i = count - 1; i >= 0; i--) {\n    putchar(digits[i]);\n}",
+      state: { "on screen": "407" }
+    }
+  ],
+  hint: "Zero and negative numbers are handled before the loop, because zero would produce no digits at all and a negative would break the remainder."
+});
+
+Guide.quiz("q-color", {
+  question: "make_color(fg, bg) returns fg | (bg << 4). What does make_color(15, 1) produce?",
+  options: [
+    { text: "0x1F, white text on a blue background", correct: true, why: "Right. 15 is 0x0F in the low nibble, and 1 shifted left four becomes 0x10 in the high nibble. OR them and you get 0x1F: foreground 15 which is white, background 1 which is blue." },
+    { text: "0xF1, blue text on a white background", why: "That would be make_color(1, 15), the arguments the other way round. The foreground is the one that does not get shifted." },
+    { text: "16, since 15 + 1 is 16", why: "It is an OR of two bit patterns, not addition. The shift puts them in separate nibbles so they never interact." },
+    { text: "0x0F, because the shift is discarded", why: "The shift is what positions the background. Nothing is discarded, both nibbles end up in the result." }
+  ]
+});
+
+Guide.quiz("q-index", {
+  question: "A bug changes VGA_WIDTH to 79 while the hardware still uses 80. What do you see?",
+  options: [
+    { text: "Text drifts diagonally, each line starting one cell further left", correct: true, why: "Correct. The index formula multiplies the row by 79, so every row starts one cell short of where the hardware puts it. The error accumulates down the screen and the text slants." },
+    { text: "The rightmost column stops being used but everything else looks fine", why: "That would be true if only the wrap check used the constant. But the index formula uses it too, so every row's starting position shifts." },
+    { text: "Nothing changes, since 79 and 80 are close enough", why: "The formula is exact arithmetic. One cell of error per row compounds into 24 cells by the bottom of the screen." },
+    { text: "The screen scrolls constantly", why: "Scrolling is driven by the row counter against VGA_HEIGHT, which is unchanged. The damage here is horizontal." }
+  ]
+});
+
+Guide.quiz("q-digit", {
+  question: "Why does print_int add '0' to each digit value?",
+  options: [
+    { text: "To convert the number into its character code, since the digit characters are consecutive in ASCII", correct: true, why: "Right. '0' is 48, '1' is 49 and so on. Adding 48 to the value 7 gives 55, which is the character '7'. Without it you would write the raw value 7 into video memory and get whatever glyph sits at code 7." },
+    { text: "To make sure the digit is not negative", why: "Negatives are handled separately before the loop, by printing a minus sign and flipping the value." },
+    { text: "To pad the number with leading zeros", why: "No padding happens here. The digit count comes out naturally from how many divisions the loop performs." },
+    { text: "Because video memory cannot store the value 0", why: "It can store any byte. The issue is that the byte is interpreted as a character code, not as a number." }
+  ]
+});
+</script>
+</body>
+</html>

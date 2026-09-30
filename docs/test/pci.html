@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>The PCI bus, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Getting online</div>
+      <h1>The PCI bus</h1>
+      <p class="lede">Every device so far lived at a port number fixed by decades of convention. A network card does not. Finding out where it ended up is a lesson of its own.</p>
+
+      <h2>Why this lesson exists</h2>
+      <p>
+        The keyboard is always at port 0x60. The timer is always at 0x40. Those numbers are burned into
+        forty years of PC design and no driver has to discover them.
+      </p>
+      <p>
+        Expansion cards are different. They plug in, and the firmware assigns each one a block of ports at
+        boot. Two identical machines can give the same card different addresses. So before you can write a
+        single byte to a network card, you have to find it.
+      </p>
+
+      <div id="m-fixed"></div>
+
+      <div class="box info">
+        <span class="t">What PCI actually is</span>
+        A standard for how expansion cards describe themselves and get assigned resources. Every PCI device
+        carries a small block of identification data called its configuration space, and the bus provides a
+        uniform way to read that data without knowing anything about the device first.
+      </div>
+
+      <h2>Where devices live</h2>
+      <p>
+        A device's location is three numbers, and every PCI lookup needs all three.
+      </p>
+
+      <div id="m-location"></div>
+
+      <p>
+        The lessons only ever check function 0. Multi function devices exist, a combined network and modem
+        card being the classic example, but the network card is on function 0 and scanning all eight would
+        multiply the work by eight for nothing.
+      </p>
+
+      <h2>Two ports for the whole bus</h2>
+      <p>
+        PCI configuration space is not in the memory map. It is reached through two I/O ports, using the
+        address and data pattern from the <a href="ports.html">port I/O page</a>.
+      </p>
+
+      <div id="m-ports"></div>
+
+      <p>
+        These are 32 bit ports, which is why the lessons had to add <code>inl</code> and <code>outl</code>
+        alongside the existing byte versions. PCI configuration is read in whole 32 bit words.
+      </p>
+
+      <h2>Packing the address word</h2>
+      <p>
+        This is the fiddly part of the lesson. Bus, device, function and offset all have to be squeezed
+        into one 32 bit value, each in its own bit range.
+      </p>
+
+      <div id="m-addr"></div>
+
+      <p>
+        Every field has a fixed home. Get a shift wrong and you read a different device entirely, or a
+        different field of the right device, and the value you get back looks like plausible garbage.
+      </p>
+
+      <div id="m-addrbuild"></div>
+
+      <div id="w-read"></div>
+
+      <div id="q-mask"></div>
+
+      <h2>What comes back at offset 0</h2>
+      <p>
+        The first 32 bit word of every device's configuration space holds two identification numbers, and
+        together they say exactly what the device is.
+      </p>
+
+      <div id="m-ids"></div>
+
+      <p>
+        Splitting them is the low half and high half of one 32 bit read, exactly the extraction pattern from
+        the <a href="bits.html">bits page</a>.
+      </p>
+
+      <div id="w-split"></div>
+
+      <div id="q-ffff"></div>
+
+      <h2>The scan</h2>
+      <p>
+        With one function to read a config word, enumerating the whole bus is two nested loops and a check.
+      </p>
+
+      <div id="w-scan"></div>
+
+      <p>
+        8192 reads happen in a fraction of a second, so the brute force approach is fine. A real OS would
+        use the bridge information to skip buses that do not exist, but there is no need here.
+      </p>
+
+      <h2>What it actually finds</h2>
+      <p>
+        Here is the real output from the <code>lspci</code> command running in the browser emulator.
+      </p>
+
+      <div id="t-lspci"></div>
+
+      <div id="m-found"></div>
+
+      <p>
+        Every one of those is a genuine emulated device. The interesting line is device 5, and it caused a
+        mid project correction worth describing.
+      </p>
+
+      <h2>The card was not what the lesson expected</h2>
+      <p>
+        The networking lessons were planned around the Intel e1000, a well documented card with plenty of
+        reference material. The scan said otherwise.
+      </p>
+
+      <div id="s-wrongcard"></div>
+
+      <div class="box warn">
+        <span class="t">Why this matters beyond the anecdote</span>
+        The whole point of a scan is to discover reality rather than assume it. Had the driver been written
+        against the assumption, it would have configured registers on a card that was not there, and every
+        read would have returned 0xFF with no clue why. The scan is what turned a hard bug into a five
+        minute correction.
+      </div>
+
+      <h2>Finding one specific device</h2>
+      <p>
+        Listing everything is useful for a human. A driver wants a targeted search, which is the same walk
+        stopping at the first match.
+      </p>
+
+      <div id="w-find"></div>
+
+      <p>
+        Returning a small struct rather than a sentinel value means the caller cannot mistake a valid
+        location for a failure. Bus 0 device 0 is a real location, so there is no spare number to mean not
+        found.
+      </p>
+
+      <div id="q-found"></div>
+
+      <h2>BAR0, the answer the driver needed</h2>
+      <p>
+        Knowing the card exists is not enough. The driver needs its port numbers, and those live in the
+        configuration space at offset 0x10 in a Base Address Register.
+      </p>
+
+      <div id="s-bar"></div>
+
+      <div id="w-bar"></div>
+
+      <p>
+        The mask is not optional. An I/O BAR has its lowest bit set as a type marker, so the raw value is
+        the real base port plus one. Every register access would land one byte off, which on this card means
+        reading a completely different register.
+      </p>
+
+      <div id="q-bar"></div>
+
+      <h2>The whole chain</h2>
+      <p>
+        Putting it together, this is what happens between boot and the first byte written to the card.
+      </p>
+
+      <div id="s-chain"></div>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("pci");
+
+Guide.memMap("m-fixed", {
+  title: "Fixed addresses versus assigned ones, click each",
+  segments: [
+    { label: "fixed by convention", weight: 2, addr: "keyboard, timer, PIC, RTC", desc: "Port 0x60 for the keyboard, 0x40 for the timer, 0x20 for the PIC, 0x70 for the RTC. These numbers come from the original IBM PC and every machine since honours them. A driver just knows them, and the lessons hardcode them as constants." },
+    { label: "assigned at boot", weight: 2, addr: "the network card", desc: "An expansion card gets its ports allocated by the firmware during startup. The number depends on what else is plugged in and in what order. Hardcoding a guess would work on one machine and fail on the next, so the address has to be discovered." }
+  ],
+  hint: "This is the entire reason the PCI lesson comes before the driver lesson."
+});
+
+Guide.memMap("m-location", {
+  title: "A device address is three numbers, click each",
+  segments: [
+    { label: "bus", weight: 2, addr: "0 to 255", desc: "Which PCI bus. Simple machines have only bus 0, but bridges can create more, and each one supports its own set of devices. The lessons scan all 256 because checking an empty bus costs nothing." },
+    { label: "device", weight: 2, addr: "0 to 31", desc: "Also called the slot. Up to 32 devices per bus. In the emulator the card turns up at device 5, though that number is not guaranteed and is exactly why scanning beats guessing." },
+    { label: "function", weight: 1, addr: "0 to 7", desc: "One physical device can expose up to eight independent functions, such as a combined network and modem card. The lessons check only function 0, since that is where the network card lives." }
+  ],
+  hint: "256 buses times 32 devices is 8192 locations to check, which takes a fraction of a second."
+});
+
+Guide.memMap("m-ports", {
+  title: "The two configuration ports, click each",
+  segments: [
+    { label: "0xCF8, address", weight: 1, addr: "write only, 32 bits", desc: "You write a packed 32 bit value naming the bus, device, function and which field you want. Nothing is read yet, this just selects a target. Written with outl because it is a 32 bit port." },
+    { label: "0xCFC, data", weight: 1, addr: "read and write, 32 bits", desc: "Now holds the 32 bit word from whatever you selected. Read it with inl. Select a different address and this same port carries something entirely different, exactly like the RTC's data port." }
+  ],
+  hint: "Two ports give access to every field of every device on every bus. That is what makes PCI enumerable."
+});
+
+Guide.memMap("m-addr", {
+  title: "The 32 bit address word, click each field",
+  segments: [
+    { label: "bit 31", weight: 1, addr: "enable", desc: "Must be 1 or the whole read is ignored and you get nothing useful. Written as 1u << 31 with the unsigned suffix, because shifting a signed 1 into the sign bit is undefined behaviour." },
+    { label: "bits 30 to 24", weight: 1, addr: "reserved", desc: "Must be zero. Nothing to set, they just have to stay clear, which happens naturally if you only OR in the fields you mean." },
+    { label: "bits 23 to 16", weight: 2, addr: "bus number", desc: "Eight bits for 256 buses. Shifted left 16 to land here, which is why the code reads bus << 16." },
+    { label: "bits 15 to 11", weight: 2, addr: "device number", desc: "Five bits for 32 devices. Shifted left 11. Getting this shift wrong is the classic mistake and gives you a different device's data." },
+    { label: "bits 10 to 8", weight: 1, addr: "function number", desc: "Three bits for 8 functions. Shifted left 8. The lessons always pass 0 here." },
+    { label: "bits 7 to 2", weight: 2, addr: "register offset", desc: "Which 32 bit word inside the configuration space. Masked with 0xFC to force 4 byte alignment, since reads are always whole words." },
+    { label: "bits 1 to 0", weight: 1, addr: "always zero", desc: "Forced to zero by that 0xFC mask. Configuration reads are 32 bits wide, so the bottom two bits of a byte offset carry no meaning." }
+  ],
+  hint: "Seven fields in one word. Each shift puts a value in its own home, and the ORs combine them without collision."
+});
+
+Guide.packBuilder("m-addrbuild", {
+  title: "Build an address word yourself",
+  intro: "Type a device number and see the pieces of the resulting address. The other fields are held at bus 0, function 0, offset 0.",
+  label: "device number:",
+  value: "5",
+  srcBits: 8,
+  parts: [
+    { label: "device << 11, byte 1", expr: "((dev << 11) >> 8) & 0xFF", calc: function (v) { return (((v << 11) >>> 8)) & 0xFF; } },
+    { label: "device << 11, byte 2", expr: "((dev << 11) >> 16) & 0xFF", calc: function (v) { return (((v << 11) >>> 16)) & 0xFF; } },
+    { label: "enable bit, top byte", expr: "(1u << 31) >> 24", calc: function () { return 0x80; } },
+    { label: "offset field", expr: "offset & 0xFC", calc: function () { return 0; } }
+  ],
+  hint: "Device 5 shifted left 11 gives 0x2800. Combined with the enable bit the full word is 0x80002800. Try device 1 and 2 to watch the field move."
+});
+
+Guide.codeWalk("w-read", {
+  title: "Reading a config word, from pci.cpp",
+  code: "#define PCI_ADDRESS_PORT 0xCF8\n#define PCI_DATA_PORT    0xCFC\n\nuint32_t pci_config_read(uint8_t bus, uint8_t device,\n                         uint8_t function, uint8_t offset) {\n    uint32_t address = (uint32_t)((1u << 31)\n                     | ((uint32_t)bus      << 16)\n                     | ((uint32_t)device   << 11)\n                     | ((uint32_t)function << 8)\n                     | ((uint32_t)offset & 0xFC));\n\n    outl(PCI_ADDRESS_PORT, address);\n    return inl(PCI_DATA_PORT);\n}",
+  notes: [
+    { lines: [6, 6], text: "The enable bit. Written 1u rather than 1 because shifting a signed int into bit 31 hits the sign bit, which is undefined behaviour in C++." },
+    { lines: [7, 9], text: "Each field cast to uint32_t before shifting. The parameters are uint8_t, and shifting a byte left 16 would overflow it and lose the value entirely without the cast." },
+    { lines: [10, 10], text: "The offset masked to 0xFC clears the bottom two bits, forcing 4 byte alignment. Configuration reads are always 32 bits, so an unaligned offset is meaningless." },
+    { lines: [6, 10], text: "One OR chain combining five pieces. Because every field occupies its own bit range, none can corrupt another, which is the whole technique from the flags page." },
+    { lines: [12, 12], text: "Write the address first. This selects what the data port will carry, and nothing has been read yet." },
+    { lines: [13, 13], text: "Now read 32 bits from the data port. Reading before writing the address would return whatever was selected previously, which is the classic address and data port mistake." }
+  ]
+});
+
+Guide.memMap("m-ids", {
+  title: "The first config word, click each half",
+  segments: [
+    { label: "low 16 bits", weight: 1, addr: "vendor ID", desc: "Who made the chip, assigned by the PCI standards body so every manufacturer has a unique number. 0x8086 is Intel, a nod to the 8086 processor. 0x10EC is Realtek. 0x1234 is what QEMU uses for its own emulated VGA." },
+    { label: "high 16 bits", weight: 1, addr: "device ID", desc: "Which model, chosen by that manufacturer. Only meaningful alongside the vendor ID, since two vendors could both use device 0x8029 for different things. Together the pair identifies the chip exactly." }
+  ],
+  hint: "One 32 bit read gives both. The driver matches on the pair to know it found the right card."
+});
+
+Guide.codeWalk("w-split", {
+  title: "Splitting the word into two IDs",
+  code: "uint32_t id = pci_config_read(bus, device, 0, 0);\nuint16_t vendor = id & 0xFFFF;\nuint16_t devid  = (id >> 16) & 0xFFFF;\n\nif (vendor == 0xFFFF) continue;   // nothing plugged in here",
+  notes: [
+    { lines: [1, 1], text: "Offset 0 is the identification word. Function 0 because the lessons only check the first function of each device." },
+    { lines: [2, 2], text: "Mask the low 16 bits for the vendor. No shift needed, these bits are already at the bottom." },
+    { lines: [3, 3], text: "Shift down 16 to bring the high half to the bottom, then mask. The mask is belt and braces here since only 16 bits remain after the shift, but it makes the field width explicit." },
+    { lines: [5, 5], text: "The empty slot check. With no device present the bus floats high and every bit reads as 1, giving 0xFFFF. No real vendor owns that value precisely so it can serve as the sentinel." }
+  ]
+});
+
+Guide.codeWalk("w-scan", {
+  title: "The scan, from pci.cpp",
+  code: "void pci_scan() {\n    print(\"Scanning PCI bus:\\n\");\n    for (int bus = 0; bus < 256; bus++) {\n        for (int device = 0; device < 32; device++) {\n            uint32_t id = pci_config_read(bus, device, 0, 0);\n            uint16_t vendor = id & 0xFFFF;\n            uint16_t devid  = (id >> 16) & 0xFFFF;\n\n            if (vendor == 0xFFFF) continue;\n\n            print(\"  bus \");  print_int(bus);\n            print(\" dev \");   print_int(device);\n            print(\": vendor \"); print_hex16(vendor);\n            print(\" device \");  print_hex16(devid);\n\n            if (vendor == 0x10EC && devid == 0x8029) {\n                print(\"  <- network card (NE2000/RTL8029)\");\n            }\n            putchar('\\n');\n        }\n    }\n    print(\"PCI scan done.\\n\");\n}",
+  notes: [
+    { lines: [3, 4], text: "256 buses times 32 devices is 8192 config reads. Each is two port operations, so about 16000 in total, which completes in a fraction of a second." },
+    { lines: [5, 5], text: "Function is hardcoded to 0 and offset to 0, so this reads the identification word of the first function of every possible location." },
+    { lines: [9, 9], text: "Skip empty slots. Without this the output would be 8192 lines of 0xFFFF and the real devices would be lost in it." },
+    { lines: [13, 14], text: "Printed in hex rather than decimal, because vendor and device IDs are only ever documented in hex. 0x8086 is recognisable, 32902 is not." },
+    { lines: [16, 18], text: "Highlighting the card we care about. This originally checked for 0x8086 and 0x100E, the Intel e1000, and had to be corrected once the scan revealed what was actually there." }
+  ]
+});
+
+Guide.terminal("t-lspci", {
+  title: "lspci, recorded from the browser emulator",
+  text: "> lspci\nScanning PCI bus:\n  bus 0 dev 0: vendor 0x8086 device 0x1237\n  bus 0 dev 1: vendor 0x8086 device 0x7000\n  bus 0 dev 5: vendor 0x10EC device 0x8029  <- network card (NE2000/RTL8029)\n  bus 0 dev 18: vendor 0x1234 device 0x1111\n  bus 0 dev 30: vendor 0x8086 device 0x7010\nPCI scan done.\n> ",
+  hint: "Five real devices out of 8192 locations checked. Everything else returned 0xFFFF and was skipped."
+});
+
+Guide.memMap("m-found", {
+  title: "What each device is, click to identify",
+  segments: [
+    { label: "dev 0", weight: 1, addr: "0x8086 / 0x1237", desc: "Intel 440FX host bridge. The chip connecting the CPU to the PCI bus itself, so it is always device 0. Not something a driver talks to." },
+    { label: "dev 1", weight: 1, addr: "0x8086 / 0x7000", desc: "Intel PIIX3 ISA bridge. Provides the legacy devices with their fixed ports: the keyboard controller, the PIC, the timer and the RTC all hang off this." },
+    { label: "dev 5", weight: 2, addr: "0x10EC / 0x8029", desc: "Realtek RTL8029, an NE2000 compatible network card. The one the whole lesson exists to find. 0x10EC is Realtek's vendor ID." },
+    { label: "dev 18", weight: 1, addr: "0x1234 / 0x1111", desc: "QEMU's own standard VGA adapter. The 0x1234 vendor ID is not a real company, it is a placeholder the emulator uses for its invented devices." },
+    { label: "dev 30", weight: 1, addr: "0x8086 / 0x7010", desc: "Intel PIIX3 IDE controller, for disc access. The lessons never use it, since the kernel is loaded from the ISO by GRUB before any of our code runs." }
+  ],
+  hint: "Device numbers are not sequential. The firmware assigns them, and the gaps are normal."
+});
+
+Guide.stepper("s-wrongcard", {
+  title: "The card was not the one the lesson planned for",
+  steps: [
+    {
+      head: "The plan was an Intel e1000",
+      text: "A well documented card with plenty of reference material, and the usual choice for a teaching OS. The scan's highlight check was written to look for it.",
+      code: "if (vendor == 0x8086 && devid == 0x100E) {\n    print(\"  <- network card (e1000)\");\n}",
+      state: { "expected": "0x8086 / 0x100E" }
+    },
+    {
+      head: "The scan output said otherwise",
+      text: "Running lspci in the browser emulator showed a device at bus 0 dev 5 with vendor 0x10EC and device 0x8029. The e1000 was nowhere in the list.",
+      state: { "actual": "0x10EC / 0x8029", "e1000 present": "no" }
+    },
+    {
+      head: "0x10EC is Realtek",
+      text: "Device 0x8029 is an RTL8029, which is NE2000 compatible. A completely different chip from the e1000, with a different register set and a different programming model.",
+      state: { "card": "NE2000 compatible" }
+    },
+    {
+      head: "The highlight check never fired",
+      text: "Because it was looking for the wrong pair, lspci listed the card but did not flag it as the network card. The lesson had shipped with a check that could never match.",
+      state: { "bug": "published lesson highlighted nothing" }
+    },
+    {
+      head: "Two things were corrected",
+      text: "The check was fixed to the real pair, and the entire driver plan changed. The e1000 uses memory mapped registers and descriptor rings, while the NE2000 uses port I/O and remote DMA. Quite different lessons.",
+      code: "if (vendor == 0x10EC && devid == 0x8029) {\n    print(\"  <- network card (NE2000/RTL8029)\");\n}",
+      state: { "driver plan": "rewritten for NE2000" }
+    },
+    {
+      head: "The NE2000 turned out simpler",
+      text: "It is an older design using the port I/O the OS already had, rather than memory mapped registers needing volatile pointer casts. The correction made the driver easier, not harder.",
+      state: { "outcome": "simpler driver, and it matches the real hardware" }
+    }
+  ],
+  hint: "The scan was doing its job. Assuming the hardware would have produced a driver that silently talked to nothing."
+});
+
+Guide.codeWalk("w-find", {
+  title: "A targeted search, from pci.cpp",
+  code: "struct PciDevice {\n    bool     found;\n    uint8_t  bus;\n    uint8_t  device;\n};\n\nPciDevice pci_find_device(uint16_t vendor_id, uint16_t device_id) {\n    for (int bus = 0; bus < 256; bus++) {\n        for (int device = 0; device < 32; device++) {\n            uint32_t id = pci_config_read(bus, device, 0, 0);\n            uint16_t vendor = id & 0xFFFF;\n            uint16_t dev_id = (id >> 16) & 0xFFFF;\n            if (vendor == vendor_id && dev_id == device_id) {\n                PciDevice result = { true, (uint8_t)bus, (uint8_t)device };\n                return result;\n            }\n        }\n    }\n    PciDevice notfound = { false, 0, 0 };\n    return notfound;\n}",
+  notes: [
+    { lines: [1, 5], text: "A struct because three values have to come back. A found flag plus a location, which is cleaner than an output parameter for something this small." },
+    { lines: [2, 2], text: "The explicit flag matters. Bus 0 device 0 is a genuine location, the host bridge, so no combination of bus and device is free to mean not found." },
+    { lines: [12, 12], text: "Named dev_id rather than device to avoid shadowing the loop variable. Reusing the name here would silently store the device ID as the location and the driver would look for the card in the wrong slot." },
+    { lines: [13, 13], text: "Match on both IDs. Vendor alone is not enough, since one manufacturer makes many different chips and several Intel devices are in the list." },
+    { lines: [14, 15], text: "Return immediately on the first match. Unlike the scan, there is no reason to keep walking once the card is located." },
+    { lines: [19, 20], text: "Not found, with the flag clear. The caller checks that rather than inspecting the bus and device numbers, which are meaningless in this case." }
+  ]
+});
+
+Guide.stepper("s-bar", {
+  title: "Getting the card's port numbers",
+  steps: [
+    {
+      head: "The card is found, but its ports are unknown",
+      text: "pci_find_device gives a bus and device number. That locates it on the bus, but says nothing about which I/O ports the driver should write to.",
+      state: { "bus": "0", "device": "5", "io_base": "still unknown" }
+    },
+    {
+      head: "Read configuration offset 0x10",
+      text: "That word is Base Address Register 0, which holds the start of the resource block the firmware assigned to this card.",
+      code: "uint32_t bar0 = pci_config_read(dev.bus, dev.device, 0, 0x10);",
+      state: { "bar0": "a raw value with a type flag in it" }
+    },
+    {
+      head: "The lowest bit is a type marker",
+      text: "Bit 0 set means the BAR describes I/O ports. Clear would mean memory mapped registers, which is what the e1000 would have used.",
+      state: { "bit 0": "1, so these are ports" }
+    },
+    {
+      head: "So the raw value is not the base",
+      text: "It is the base with the type marker added in. Using it directly would put every register access one byte off from where it should be.",
+      state: { "raw value": "base + 1" }
+    },
+    {
+      head: "Mask off the low two bits",
+      text: "Clearing them removes the flags and leaves the real base port number.",
+      code: "io_base = (uint16_t)(bar0 & 0xFFFFFFFC);",
+      state: { "io_base": "the real base port" }
+    },
+    {
+      head: "Now every register is base plus offset",
+      text: "The driver stores io_base once and adds a fixed offset for each register. Those offsets are set by the chip design, while the base was discovered at boot.",
+      code: "outb(io_base + NE_CR, CR_STOP | CR_PAGE0);",
+      state: { "driver": "can finally talk to the card" }
+    }
+  ],
+  hint: "One config read and one mask, and that is the entire bridge between finding a device and driving it."
+});
+
+Guide.codeWalk("w-bar", {
+  title: "From BAR0 to io_base, from ne2000.cpp",
+  code: "PciDevice dev = pci_find_device(0x10EC, 0x8029);\nif (!dev.found) {\n    print(\"NE2000: card not found\\n\");\n    return false;\n}\n\nuint32_t bar0 = pci_config_read(dev.bus, dev.device, 0, 0x10);\nio_base = (uint16_t)(bar0 & 0xFFFFFFFC);",
+  notes: [
+    { lines: [1, 1], text: "The real vendor and device pair, corrected after the scan revealed what was present. The driver refuses to proceed without an exact match." },
+    { lines: [2, 5], text: "Failing loudly. Printing a message and returning false is far better than continuing with io_base at zero, which would write to whatever device happens to live at low port numbers." },
+    { lines: [7, 7], text: "Offset 0x10 is BAR0. Later BARs at 0x14, 0x18 and so on describe further resources, but the NE2000 only needs the first." },
+    { lines: [8, 8], text: "The mask clears the bottom two bits, removing the type flag. Skip it and io_base is one too high, so every register offset lands on the wrong register." },
+    { lines: [8, 8], text: "Cast to uint16_t because port numbers are 16 bits. An I/O BAR only ever contains a 16 bit port address, so the upper half is not meaningful." }
+  ]
+});
+
+Guide.stepper("s-chain", {
+  title: "Boot to first byte written to the card",
+  steps: [
+    {
+      head: "The firmware assigns resources",
+      text: "Long before your code runs, the firmware walks the PCI bus and gives each device a block of I/O ports. Which block depends on what is plugged in.",
+      state: { "who does this": "firmware", "our code": "not running yet" }
+    },
+    {
+      head: "ne2000_init asks PCI for the card",
+      text: "A scan of all 8192 locations looking for vendor 0x10EC and device 0x8029, stopping at the first match.",
+      code: "PciDevice dev = pci_find_device(0x10EC, 0x8029);",
+      state: { "found at": "bus 0, device 5" }
+    },
+    {
+      head: "Read BAR0 from its configuration space",
+      text: "Offset 0x10 gives the base of the port block the firmware assigned, with a type flag in the low bit.",
+      code: "uint32_t bar0 = pci_config_read(dev.bus, dev.device, 0, 0x10);",
+      state: { "bar0": "raw, flags included" }
+    },
+    {
+      head: "Mask to get the clean base port",
+      text: "Clearing the low two bits leaves the real port number, which the driver stores for the rest of the OS's life.",
+      code: "io_base = (uint16_t)(bar0 & 0xFFFFFFFC);",
+      state: { "io_base": "known" }
+    },
+    {
+      head: "Now write to the card",
+      text: "Base plus a fixed register offset. The base was discovered, the offsets come from the chip's datasheet, and together they address any register.",
+      code: "outb(io_base + NE_CR, CR_STOP | CR_PAGE0);",
+      state: { "card": "responding" }
+    },
+    {
+      head: "Everything after this depends on it",
+      text: "Reading the MAC, sending frames, receiving frames, ARP. All of it is base plus offset, so a wrong base would break every single one identically.",
+      state: { "next": "reset the card and read its MAC" }
+    }
+  ],
+  hint: "Two config reads produce one number, and that number is what every later networking lesson is built on."
+});
+
+Guide.quiz("q-mask", {
+  question: "Why is the offset masked with 0xFC when building the address word?",
+  options: [
+    { text: "Configuration reads are 32 bits wide, so the offset must be 4 byte aligned and the low two bits carry no meaning", correct: true, why: "Right. 0xFC is 1111 1100, which clears the bottom two bits. Since every read returns a whole 32 bit word, an offset of 0x12 would be meaningless. The mask forces it to 0x10, the start of that word, and the address format requires bits 1 and 0 to be zero anyway." },
+    { text: "To keep the offset within the 8 bit field", why: "The parameter is already uint8_t so it cannot exceed 255. The mask is about alignment, not range." },
+    { text: "Because 0xFC is the maximum valid offset", why: "0xFC happens to be a valid offset, but here it is being used as a bit mask rather than a limit." },
+    { text: "To make the offset unsigned", why: "It is already uint8_t. Masking changes which bits survive, not the signedness." }
+  ]
+});
+
+Guide.quiz("q-ffff", {
+  question: "Why does a vendor ID of 0xFFFF mean no device is present?",
+  options: [
+    { text: "With nothing driving the bus it floats high, so every bit reads as 1", correct: true, why: "Correct. A PCI slot with no card leaves the data lines pulled high, and reading them gives all ones. No manufacturer was ever assigned 0xFFFF precisely so it can serve as the empty marker, which is what lets the scan skip 8187 empty locations cleanly." },
+    { text: "0xFFFF is a reserved vendor meaning unknown device", why: "It is not assigned to anyone at all. The value comes from the electrical behaviour of an empty slot, not from a registry entry." },
+    { text: "The firmware writes 0xFFFF into empty slots at boot", why: "There is nothing there to write to. The value is what reading floating lines produces." },
+    { text: "Because the read times out and returns all ones", why: "No timeout is involved. The read completes normally and returns what the undriven bus lines show." }
+  ]
+});
+
+Guide.quiz("q-found", {
+  question: "Why does PciDevice carry an explicit found flag instead of using bus 0 device 0 to mean not found?",
+  options: [
+    { text: "Bus 0 device 0 is a real location, the host bridge, so it cannot double as a failure value", correct: true, why: "Right. The lspci output shows a genuine device at bus 0 dev 0, the Intel 440FX host bridge. Every combination of bus and device is potentially valid, so there is no spare value left to mean not found. An explicit flag avoids the ambiguity entirely." },
+    { text: "Because structs cannot return negative numbers", why: "The fields are uint8_t so they cannot hold negatives, but the deeper issue is that no positive value is free either." },
+    { text: "To match the style of the rest of the codebase", why: "It is a correctness decision rather than a stylistic one. Without the flag the caller could not distinguish success at 0,0 from failure." },
+    { text: "So the caller does not have to check anything", why: "The caller must check the flag. It exists to make that check possible, not to remove it." }
+  ]
+});
+
+Guide.quiz("q-bar", {
+  question: "You skip the & 0xFFFFFFFC mask on BAR0. What happens?",
+  options: [
+    { text: "io_base is one too high, so every register access lands on the wrong register", correct: true, why: "Correct. An I/O BAR sets bit 0 as a type marker, so the raw value is the base port plus one. Every access becomes base plus one plus offset, shifting the whole register map by a byte. Reading the command register would actually read PSTART, and the card would appear to behave randomly with no error reported." },
+    { text: "The card is not found at all", why: "Finding the card happens earlier, through the vendor and device IDs. This bug affects talking to it after it has been located." },
+    { text: "Nothing, since the low bits are ignored by outb", why: "outb uses the full port number it is given. Nothing strips the flag for you." },
+    { text: "The read raises a fault", why: "Port reads never fault. They return whatever the addressed port holds, which is why this failure is silent and confusing." }
+  ]
+});
+</script>
+</body>
+</html>

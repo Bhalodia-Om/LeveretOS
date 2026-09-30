@@ -1,0 +1,498 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>Physical memory, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Managing memory</div>
+      <h1>Physical memory</h1>
+      <p class="lede">Before the OS can hand out memory it has to know what memory exists, and which parts it is allowed to touch. That bookkeeping is one bit per 4 KB chunk of RAM.</p>
+
+      <h2>Not all memory is RAM</h2>
+      <p>
+        A naive assumption would be that a machine with 128 MB has 128 MB of usable addresses starting at
+        zero. It does not. The address space is a patchwork, and writing to the wrong part of it does
+        anything from nothing at all to breaking the display.
+      </p>
+
+      <div id="m-patchwork"></div>
+
+      <p>
+        There is no way to work this out from first principles, it varies by machine. So the OS asks.
+        GRUB surveyed memory during boot and left a list behind, which is exactly what that memory map
+        flag in the multiboot header was requesting.
+      </p>
+
+      <div class="box info">
+        <span class="t">Where the list comes from</span>
+        GRUB asked the firmware, which knows because the chipset tells it. Your kernel receives the
+        finished list as a pointer in <code>ebx</code>, handed along by <code>boot.s</code> as described
+        on the <a href="boot.html">boot page</a>.
+      </div>
+
+      <h2>Frames, not bytes</h2>
+      <p>
+        Tracking every individual byte would need a byte of bookkeeping per byte of RAM, which is absurd.
+        So memory is divided into fixed size chunks called frames, and the allocator deals only in whole
+        frames.
+      </p>
+
+      <div id="m-frame"></div>
+
+      <p>
+        4096 bytes is not arbitrary. It is the page size the CPU's paging hardware uses, so choosing the
+        same size means a frame maps exactly onto one page later. The paging lesson depends on that
+        alignment.
+      </p>
+
+      <div id="m-framecalc"></div>
+
+      <h2>One bit per frame</h2>
+      <p>
+        The bookkeeping is a bitmap: a long row of bits where each bit answers one question, is this frame
+        in use. One bit is the smallest possible answer, which makes the whole structure remarkably cheap.
+      </p>
+
+      <div id="s-bitmapsize"></div>
+
+      <p>
+        128 KB to track 4 GB of RAM is a ratio of about 1 to 32000. That efficiency is the entire reason
+        to use a bitmap rather than a list.
+      </p>
+
+      <div id="w-declare"></div>
+
+      <div id="q-bss"></div>
+
+      <h2>Finding a frame's bit</h2>
+      <p>
+        The bitmap is an array of 32 bit words, but you think in terms of frame numbers. Converting
+        between the two is one division and one remainder, and this pattern appears in all three helper
+        functions.
+      </p>
+
+      <div id="m-bitmath"></div>
+
+      <p>
+        Divide by 32 to find which word holds the bit, then take the remainder to find its position inside
+        that word. A frame number of 100 lives in word 3 at bit 4, because 100 divided by 32 is 3 with 4
+        left over.
+      </p>
+
+      <div id="w-helpers"></div>
+
+      <p>
+        These three lines are the set, clear and test operations from the
+        <a href="bits.html">bits page</a>, applied to a real structure. If they read naturally now, the
+        rest of this page is straightforward.
+      </p>
+
+      <div id="q-clear"></div>
+
+      <h2>Start pessimistic, then free what is real</h2>
+      <p>
+        The initialisation order looks backwards at first. Everything is marked used, then usable regions
+        are freed. Doing it the other way round would be a security hole.
+      </p>
+
+      <div id="s-init"></div>
+
+      <p>
+        The reasoning is about what happens to memory the map does not mention. Starting from all used
+        means anything unlisted stays reserved and is never handed out. Starting from all free would mean
+        unlisted memory is handed out by default, which could include memory mapped devices.
+      </p>
+
+      <div class="box warn">
+        <span class="t">Fail safe, not fail open</span>
+        This is a general principle worth carrying forward. When you cannot enumerate every case, default
+        to the restrictive answer and explicitly permit what you have verified. The reverse defaults to
+        permitting things you never checked.
+      </div>
+
+      <h2>Walking GRUB's list</h2>
+      <p>
+        The memory map is a list of variable length entries, which makes stepping through it slightly
+        unusual. You cannot index it like an array.
+      </p>
+
+      <div id="w-walk"></div>
+
+      <p>
+        Each entry carries its own size so the loop can find the next one. The plus four accounts for the
+        size field itself not being counted in the size it reports, which is a genuine quirk of the
+        multiboot specification rather than a bug.
+      </p>
+
+      <div id="q-offset"></div>
+
+      <h2>Protecting the kernel from itself</h2>
+      <p>
+        After freeing the usable regions there is a problem. The kernel is sitting in one of those regions,
+        so its own frames were just marked as available.
+      </p>
+
+      <div id="s-protect"></div>
+
+      <p>
+        Without that second pass, the first call to <code>alloc_frame</code> would return address zero and
+        the paging code would build its page directory directly on top of the kernel's code. The symptom
+        would be immediate and incomprehensible.
+      </p>
+
+      <div id="w-protect"></div>
+
+      <h2>Handing out a frame</h2>
+      <p>
+        The allocator is a linear search for the first clear bit. Simple, and slow in a way that does not
+        matter yet.
+      </p>
+
+      <div id="w-alloc"></div>
+
+      <p>
+        Returning the frame number multiplied by the frame size converts a bit position back into a real
+        physical address. Frame 3 becomes address 12288, and that is what the caller can actually use.
+      </p>
+
+      <div id="q-alloc"></div>
+
+      <h2>Why the numbers look the way they do</h2>
+      <p>
+        Running the <code>mem</code> command in the lessons shows figures that surprise people. Both of
+        the surprising ones have straightforward explanations.
+      </p>
+
+      <div id="t-mem"></div>
+
+      <div id="m-numbers"></div>
+
+      <p>
+        The bitmap is sized for 4 GB because that is the most a 32 bit address can reach. It does not mean
+        the machine has 4 GB, only that the allocator could cope if it did.
+      </p>
+
+      <h2>What this allocator deliberately is not</h2>
+      <p>
+        It is worth being clear about the limits, because the next lesson builds a different allocator on
+        top for exactly these reasons.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Limitation</th><th>Consequence</th></tr></thead>
+        <tbody>
+          <tr><td>only whole 4 KB frames</td><td>asking for 12 bytes wastes 4084 of them, which is why the heap exists</td></tr>
+          <tr><td>linear search</td><td>finding a frame gets slower as memory fills. Fine for a handful of allocations, wrong for thousands</td></tr>
+          <tr><td>no contiguous allocation</td><td>there is no way to ask for four frames in a row, which a real driver would need for DMA buffers</td></tr>
+          <tr><td>no ownership tracking</td><td>the bitmap knows a frame is used but not by whom, so nothing detects a double free</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        Each of these is a reasonable trade for a teaching OS. The point of the PMM is to be the one thing
+        that knows which physical memory is real and available, and it does that job correctly.
+      </p>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("pmm");
+
+Guide.memMap("m-patchwork", {
+  title: "The low address space is not all RAM, click each region",
+  segments: [
+    { label: "usable RAM", weight: 2, addr: "0x00000000 to about 0x0009FFFF", desc: "Genuine RAM, roughly 640 KB of it. The original PC limit, and still where the map starts on most machines." },
+    { label: "video memory", weight: 1, addr: "0x000A0000 to 0x000BFFFF", desc: "A window onto the display hardware, not RAM. The VGA text buffer at 0xB8000 lives here. Writing to it changes the screen, and treating it as free memory would corrupt the display." },
+    { label: "BIOS and ROM", weight: 1, addr: "0x000C0000 to 0x000FFFFF", desc: "Firmware code and device option ROMs. Read only, and reserved. Nothing the OS may allocate." },
+    { label: "usable RAM", weight: 5, addr: "0x00100000 upward", desc: "The main block, everything above 1 MB. The kernel is loaded at the very start of this at 0x100000, which is why the linker script chose that address." },
+    { label: "reserved at the top", weight: 1, addr: "near the 4 GB mark", desc: "ACPI tables, memory mapped PCI devices, and firmware areas. Also not RAM, also must not be allocated." }
+  ],
+  hint: "Only the regions GRUB marks as type 1 are real usable RAM. Everything else stays reserved."
+});
+
+Guide.memMap("m-frame", {
+  title: "Why 4096 bytes, click each",
+  segments: [
+    { label: "per byte tracking", weight: 1, addr: "one bit per byte", desc: "Tracking 4 GB byte by byte needs 4 billion bits, which is 512 MB of bookkeeping to manage 4 GB of RAM. Absurd on its face." },
+    { label: "per 4 KB frame", weight: 1, addr: "one bit per 4096 bytes", desc: "The same 4 GB needs 1048576 bits, which is 128 KB. A ratio of about 1 to 32000, and small enough to sit in the kernel's own .bss section." },
+    { label: "why 4096 exactly", weight: 1, addr: "matching the page size", desc: "The CPU's paging hardware works in 4096 byte pages. Choosing the same size for frames means one frame is exactly one page, so the paging lesson can use a frame directly with no conversion or alignment work." }
+  ],
+  hint: "The size is a compromise between bookkeeping cost and wasted space, settled by the hardware page size."
+});
+
+Guide.packBuilder("m-framecalc", {
+  title: "Addresses to frame numbers and back",
+  intro: "Type a physical address in hex and see which frame it belongs to. Try 0x100000, where the kernel loads.",
+  label: "address:",
+  value: "0x100000",
+  srcBits: 32,
+  parts: [
+    { label: "frame number, low byte", expr: "(addr / 4096) & 0xFF", calc: function (v) { return Math.floor(v / 4096) & 0xFF; } },
+    { label: "frame number, next byte", expr: "((addr / 4096) >> 8) & 0xFF", calc: function (v) { return (Math.floor(v / 4096) >>> 8) & 0xFF; } },
+    { label: "bitmap word index", expr: "(frame / 32) & 0xFF", calc: function (v) { return Math.floor(Math.floor(v / 4096) / 32) & 0xFF; } },
+    { label: "bit within the word", expr: "frame % 32", calc: function (v) { return Math.floor(v / 4096) % 32; } }
+  ],
+  hint: "0x100000 divided by 4096 is frame 256, which lives in word 8 at bit 0. The kernel starts exactly on a frame boundary because the linker aligned it."
+});
+
+Guide.stepper("s-bitmapsize", {
+  title: "Where 32768 comes from",
+  steps: [
+    {
+      head: "How much memory could a 32 bit address reach",
+      text: "The largest 32 bit address is 0xFFFFFFFF, so the address space is 4 GB. The bitmap has to cover all of it even if the machine has less.",
+      code: "#define MAX_FRAMES (0xFFFFFFFF / FRAME_SIZE + 1)",
+      state: { "address space": "4 GB" }
+    },
+    {
+      head: "Divide by the frame size",
+      text: "4 GB divided by 4096 bytes gives the number of frames. The plus one accounts for 0xFFFFFFFF being the last address rather than the count.",
+      code: "0xFFFFFFFF / 4096 + 1 = 1048576",
+      state: { "MAX_FRAMES": "1048576" }
+    },
+    {
+      head: "One bit each",
+      text: "1048576 frames need 1048576 bits of bookkeeping. That is 131072 bytes, or 128 KB.",
+      state: { "bits needed": "1048576", "bytes needed": "131072" }
+    },
+    {
+      head: "Stored as 32 bit words",
+      text: "The array is uint32_t rather than bytes, because bit operations on a machine word are what the CPU does naturally. Dividing the bit count by 32 gives the array length.",
+      code: "#define BITMAP_WORDS (MAX_FRAMES / 32)   // 32768",
+      state: { "BITMAP_WORDS": "32768", "array size": "128 KB" }
+    },
+    {
+      head: "It costs nothing in the ISO",
+      text: "The array is uninitialised, so it lands in .bss. That section takes address space but almost no file space, because the loader just zeroes it.",
+      code: "static uint32_t frame_bitmap[BITMAP_WORDS];",
+      state: { "space in the ISO": "essentially zero", "space in RAM": "128 KB" }
+    }
+  ],
+  hint: "128 KB of bookkeeping to manage 4 GB. That ratio is why bitmaps are the standard choice for this job."
+});
+
+Guide.codeWalk("w-declare", {
+  title: "The declarations, from pmm.cpp",
+  code: "#define FRAME_SIZE 4096\n\n#define MAX_FRAMES   (0xFFFFFFFF / FRAME_SIZE + 1)\n#define BITMAP_WORDS (MAX_FRAMES / 32)\n\nstatic uint32_t frame_bitmap[BITMAP_WORDS];\nstatic uint32_t total_frames = 0;\nstatic uint32_t used_frames  = 0;\n\nextern \"C\" uint8_t kernel_end;",
+  notes: [
+    { lines: [1, 1], text: "The frame size in bytes. Everything else on this page derives from this one number, and it matches the CPU's page size deliberately." },
+    { lines: [3, 4], text: "Computed at compile time from the address space size, so nothing is hardcoded. Change FRAME_SIZE and both of these follow automatically." },
+    { lines: [6, 6], text: "The bitmap itself. static keeps it private to this file, and being uninitialised puts it in .bss where it costs nothing in the binary." },
+    { lines: [7, 8], text: "Two counters so the shell's mem command can report usage without walking the whole bitmap. Cheap to maintain, and far cheaper than counting a million bits on demand." },
+    { lines: [10, 10], text: "The symbol the linker provides, marking where the kernel ends. There is no such variable in any source file, the linker script creates it. Covered on the boot page." }
+  ]
+});
+
+Guide.packBuilder("m-bitmath", {
+  title: "Frame number to word and bit",
+  intro: "Type a frame number and watch it split into an array index and a bit position.",
+  label: "frame number:",
+  value: "100",
+  srcBits: 32,
+  parts: [
+    { label: "word index", expr: "frame / 32", calc: function (v) { return Math.floor(v / 32) & 0xFF; } },
+    { label: "bit position", expr: "frame % 32", calc: function (v) { return v % 32; } },
+    { label: "the mask, low byte", expr: "(1u << (frame % 32)) & 0xFF", calc: function (v) { return (1 << (v % 32)) & 0xFF; } },
+    { label: "mask, byte 2", expr: "((1u << (frame%32)) >> 8) & 0xFF", calc: function (v) { return ((1 << (v % 32)) >>> 8) & 0xFF; } }
+  ],
+  hint: "Frame 100 is word 3, bit 4. Try 31 and 32 to see the word index roll over."
+});
+
+Guide.codeWalk("w-helpers", {
+  title: "The three bit operations, from pmm.cpp",
+  code: "static void bitmap_set(uint32_t frame) {\n    frame_bitmap[frame / 32] |= (1u << (frame % 32));\n}\n\nstatic void bitmap_clear(uint32_t frame) {\n    frame_bitmap[frame / 32] &= ~(1u << (frame % 32));\n}\n\nstatic bool bitmap_test(uint32_t frame) {\n    return frame_bitmap[frame / 32] & (1u << (frame % 32));\n}",
+  notes: [
+    { lines: [2, 2], text: "Mark a frame used. OR sets the one bit and leaves the other 31 in that word untouched, which matters because each word holds 32 unrelated frames." },
+    { lines: [6, 6], text: "Mark a frame free. The tilde inverts the mask, giving zero in the target position and ones everywhere else, so AND clears exactly one bit." },
+    { lines: [10, 10], text: "Test a frame. AND isolates the bit, and the result is non zero only if that bit was set. Returning it as bool converts non zero to true." },
+    { lines: [2, 10], text: "The 1u with the u suffix matters. A frame number ending in 31 would shift into bit 31, the sign bit of a signed int, which is undefined behaviour. Unsigned makes it safe." },
+    { lines: [2, 10], text: "All three use the same index expression. Getting frame / 32 and frame % 32 the wrong way round would still compile and would corrupt the bitmap in a way that is hard to spot." }
+  ]
+});
+
+Guide.stepper("s-init", {
+  title: "Building the bitmap, and why the order matters",
+  steps: [
+    {
+      head: "Mark everything as used",
+      text: "The whole bitmap is filled with ones. At this moment the allocator believes no memory is available anywhere.",
+      code: "for (uint32_t i = 0; i < BITMAP_WORDS; i++) {\n    frame_bitmap[i] = 0xFFFFFFFF;\n}",
+      state: { "all frames": "marked used", "total_frames": "0" }
+    },
+    {
+      head: "Walk GRUB's memory map",
+      text: "Each entry describes one region with an address, a length and a type. Type 1 means genuine usable RAM, anything else is reserved.",
+      code: "if (entry->type == MULTIBOOT_MEMORY_AVAILABLE) {",
+      state: { "reading": "one region at a time" }
+    },
+    {
+      head: "Free the frames inside usable regions",
+      text: "For each usable region, clear the bit of every frame that fits entirely inside it. A frame straddling the boundary is left reserved, because part of it is not real RAM.",
+      code: "for (uint32_t addr = start; addr + FRAME_SIZE <= end;\n     addr += FRAME_SIZE) {\n    uint32_t frame = addr / FRAME_SIZE;\n    if (bitmap_test(frame)) {\n        bitmap_clear(frame);\n        total_frames++;\n    }\n}",
+      state: { "usable frames": "now free", "total_frames": "counting up" }
+    },
+    {
+      head: "Anything unlisted stays reserved",
+      text: "This is the payoff of starting pessimistic. Video memory, ROM and the gaps between regions were never freed, so they are still marked used and can never be allocated.",
+      state: { "video memory at 0xB8000": "still reserved", "ROM areas": "still reserved" }
+    },
+    {
+      head: "Now reserve the kernel again",
+      text: "The kernel sits inside a usable region, so its frames were just freed. A second pass marks everything from address zero up to kernel_end as used.",
+      code: "uint32_t kernel_last_frame =\n    ((uint32_t)&kernel_end) / FRAME_SIZE;\nfor (uint32_t frame = 0; frame <= kernel_last_frame; frame++) {\n    if (!bitmap_test(frame)) {\n        bitmap_set(frame);\n        used_frames++;\n    }\n}",
+      state: { "kernel frames": "reserved", "used_frames": "counting up" }
+    },
+    {
+      head: "Ready to allocate",
+      text: "The bitmap now says free only for frames that are real RAM, outside the kernel, and not part of any device window.",
+      state: { "safe to call": "alloc_frame" }
+    }
+  ],
+  hint: "Reversing steps one and three would hand out the kernel's own memory, and the OS would overwrite itself on the first allocation."
+});
+
+Guide.codeWalk("w-walk", {
+  title: "Stepping through a variable length list, from pmm.cpp",
+  code: "MultibootInfo* mboot = (MultibootInfo*)multiboot_info_addr;\n\nuint32_t offset = 0;\nwhile (offset < mboot->mmap_length) {\n    MultibootMmapEntry* entry =\n        (MultibootMmapEntry*)(mboot->mmap_addr + offset);\n\n    if (entry->type == MULTIBOOT_MEMORY_AVAILABLE) {\n        uint32_t start = (uint32_t)entry->addr;\n        uint32_t end   = (uint32_t)(entry->addr + entry->len);\n        // free the frames in this region\n    }\n\n    offset += entry->size + 4;\n}",
+  notes: [
+    { lines: [1, 1], text: "Cast the address GRUB left us into a struct pointer. No data is copied, this just decides how to read bytes that already exist in memory." },
+    { lines: [4, 4], text: "mmap_length is the total size of the whole list in bytes, not a count of entries. So the loop tracks a byte offset rather than an index." },
+    { lines: [5, 6], text: "Compute the address of the current entry and cast it. Entries can vary in size, which is why this is address arithmetic rather than array indexing." },
+    { lines: [8, 8], text: "Type 1 means usable RAM. Every other value means reserved in some way, and the code simply skips those, leaving their frames marked used." },
+    { lines: [9, 10], text: "The address and length fields are 64 bit in the struct, for machines with more than 4 GB. Casting to uint32_t is safe here because this is a 32 bit OS that cannot address higher anyway." },
+    { lines: [14, 14], text: "Each entry reports its own size so the loop can find the next one. The plus four is because the size field does not count itself, a quirk of the multiboot specification." }
+  ]
+});
+
+Guide.stepper("s-protect", {
+  title: "Why the kernel needs reserving twice",
+  steps: [
+    {
+      head: "The kernel is loaded at 1 MB",
+      text: "GRUB copied it there because the linker script asked for that address. It occupies from 0x100000 up to wherever kernel_end lands.",
+      state: { "kernel start": "0x100000", "kernel end": "from the linker" }
+    },
+    {
+      head: "That address is inside a usable region",
+      text: "GRUB's map marks everything above 1 MB as type 1, usable RAM. It has no idea a kernel was loaded there, that is not its job to report.",
+      state: { "GRUB says": "usable RAM", "reality": "the kernel is running here" }
+    },
+    {
+      head: "So the freeing pass frees it",
+      text: "Walking the map and clearing bits for usable regions clears the kernel's frames too. The bitmap now claims the kernel's own memory is available.",
+      state: { "kernel frames": "marked FREE, incorrectly" }
+    },
+    {
+      head: "What would happen next",
+      text: "The paging lesson calls alloc_frame to get memory for its page directory. The allocator returns the first free frame, which is address zero, and paging writes 4096 bytes over the bottom of memory.",
+      code: "page_directory = (uint32_t*)alloc_frame();\n// would return 0x0 and scribble over low memory",
+      state: { "result": "corruption, then a crash with no clue why" }
+    },
+    {
+      head: "The second pass fixes it",
+      text: "Loop from frame zero up to and including the kernel's last frame, marking each used. Now the allocator will never return any of that memory.",
+      state: { "frames 0 to kernel_end": "reserved" }
+    },
+      {
+      head: "Why it starts at frame zero",
+      text: "Not just the kernel, but everything below it too. Low memory contains the BIOS data area and interrupt vector remnants, and nothing there is safe to hand out.",
+      state: { "first frame alloc_frame can return": "just past the kernel" }
+    }
+  ],
+  hint: "One loop, and without it the very first allocation destroys the OS."
+});
+
+Guide.codeWalk("w-protect", {
+  title: "The reservation pass, from pmm.cpp",
+  code: "uint32_t kernel_last_frame = ((uint32_t)&kernel_end) / FRAME_SIZE;\nfor (uint32_t frame = 0; frame <= kernel_last_frame; frame++) {\n    if (!bitmap_test(frame)) {\n        bitmap_set(frame);\n        used_frames++;\n    }\n}",
+  notes: [
+    { lines: [1, 1], text: "Taking the address of the linker symbol gives the end of the kernel. Dividing by the frame size converts it to a frame number." },
+    { lines: [2, 2], text: "Less than or equal, not less than. The kernel's final bytes sit inside that last frame, so the frame has to be reserved even though it is only partly used." },
+    { lines: [3, 3], text: "Only count frames that were free. Without this check, frames already reserved because they are not RAM would be counted again and used_frames would be wrong." },
+    { lines: [4, 5], text: "Mark it used and adjust the counter. The counter feeds the mem command, so an error here shows up as a wrong usage figure rather than a crash." }
+  ]
+});
+
+Guide.codeWalk("w-alloc", {
+  title: "Handing out and taking back, from pmm.cpp",
+  code: "uint32_t alloc_frame() {\n    for (uint32_t frame = 0; frame < MAX_FRAMES; frame++) {\n        if (!bitmap_test(frame)) {\n            bitmap_set(frame);\n            used_frames++;\n            return frame * FRAME_SIZE;\n        }\n    }\n    return 0;\n}\n\nvoid free_frame(uint32_t addr) {\n    uint32_t frame = addr / FRAME_SIZE;\n    if (bitmap_test(frame)) {\n        bitmap_clear(frame);\n        used_frames--;\n    }\n}",
+  notes: [
+    { lines: [2, 2], text: "A linear scan from the beginning. Slow as memory fills, since it rechecks the same used frames every time, but the lessons allocate only a handful of frames so it never matters." },
+    { lines: [3, 4], text: "Find the first clear bit and immediately set it. Doing both here means the caller cannot forget to claim it." },
+    { lines: [6, 6], text: "Multiply the frame number back into a physical address. Frame 3 becomes 12288, and that address is what the caller actually writes to." },
+    { lines: [9, 9], text: "Zero means out of memory. It doubles as a sentinel because frame zero is always reserved, so a genuine allocation can never return address zero." },
+    { lines: [13, 13], text: "Divide the address back into a frame number. This silently accepts an address in the middle of a frame, which would free the whole frame. No validation is done." },
+    { lines: [14, 14], text: "The check makes freeing an already free frame harmless rather than corrupting the counter. It does not detect the mistake, just contains it." }
+  ]
+});
+
+Guide.terminal("t-mem", {
+  title: "The mem command, recorded from a real run",
+  text: "> mem\nUsable RAM: 130556 KB, used: 808 KB, free: 129748 KB\n> ",
+  hint: "Two figures here surprise people, and both have simple explanations. The module below breaks them down."
+});
+
+Guide.memMap("m-numbers", {
+  title: "Explaining those figures, click each",
+  segments: [
+    { label: "130556 KB usable", weight: 2, addr: "about 128 MB", desc: "This is how much RAM the emulator was configured with, not a limit of the OS. QEMU defaults to 128 MB. The slightly odd number is because the low memory region below 1 MB is fragmented by device windows, so a few frames straddle boundaries and are excluded." },
+    { label: "808 KB used", weight: 1, addr: "after paging_init", desc: "The kernel itself plus the frames below it, plus the two frames paging allocated for its page directory and first page table. It grows by 4 KB for every frame anything allocates." },
+    { label: "why not 4 GB", weight: 2, addr: "the bitmap's capacity", desc: "The bitmap is sized for 4 GB because that is the most a 32 bit address can reach. Capacity is not the same as reality. Only frames GRUB reported as usable are ever marked free, so the total reflects actual RAM." }
+  ],
+  hint: "The bitmap could track 4 GB. The machine has 128 MB. Those are independent facts."
+});
+
+Guide.quiz("q-bss", {
+  question: "The bitmap is a 128 KB array. Why does that not make the ISO 128 KB bigger?",
+  options: [
+    { text: "It is uninitialised, so it goes in .bss which the loader just zeroes", correct: true, why: "Right. A variable with no starting value needs no bytes stored in the file, only a note of how much space to zero at load time. That is what .bss is for, and it is why the heap's 1 MB buffer is also free in the ISO." },
+    { text: "The compiler compresses large arrays", why: "No compression is involved. The array simply is not stored in the file at all, because there is nothing to store." },
+    { text: "It is allocated at runtime from the PMM", why: "That would be circular, the PMM needs its bitmap before it can allocate anything. It is a static array that exists before any allocation happens." },
+    { text: "128 KB is too small to notice", why: "It would be noticeable in a 5 MB ISO. The real reason is that zeroed data is never stored." }
+  ]
+});
+
+Guide.quiz("q-clear", {
+  question: "Why is bitmap_clear written as &= ~(1u << n) rather than &= (1u << n)?",
+  options: [
+    { text: "Without the tilde it would clear every bit except n, the exact opposite", correct: true, why: "Correct. 1u << n has a single one bit. ANDing with that keeps only bit n and zeroes the other 31 frames in that word. The tilde inverts the mask to zero in position n and ones elsewhere, which clears just the one bit." },
+    { text: "The tilde is needed to make the shift unsigned", why: "The u suffix does that. The tilde is a bitwise NOT that inverts the mask." },
+    { text: "Both forms work, the tilde is clearer", why: "They do completely different things. Dropping it would wipe 31 frames of bookkeeping on every free." },
+    { text: "The tilde prevents integer overflow", why: "No overflow is possible here. Inverting a mask is about which bits the AND preserves." }
+  ]
+});
+
+Guide.quiz("q-offset", {
+  question: "The loop advances with offset += entry->size + 4. What breaks if you drop the plus four?",
+  options: [
+    { text: "Each step lands four bytes short, so the next entry is read misaligned and the whole list becomes garbage", correct: true, why: "Right. The size field reports the size of the entry not counting itself, so the true stride is size plus four. Falling short means the next cast reads from the middle of the previous entry, producing nonsense addresses and types. The loop might also never terminate." },
+    { text: "Only the last entry is missed", why: "The error compounds from the very first step, so every entry after the first is misread." },
+    { text: "Nothing, since entries are usually the same size", why: "Even with uniform entries the stride would still be four bytes short each time, and the misalignment accumulates." },
+    { text: "The loop runs forever", why: "It might, but the more immediate problem is reading garbage entries and freeing frames that are not RAM." }
+  ]
+});
+
+Guide.quiz("q-alloc", {
+  question: "alloc_frame returns 0 when it cannot find a free frame. Why is zero safe as an error value?",
+  options: [
+    { text: "Frame zero is always reserved, so a successful allocation can never return address zero", correct: true, why: "Correct. The kernel protection pass reserves every frame from zero up to kernel_end, so frame zero is never available. That makes address zero unambiguous as a failure signal, and it also matches the C++ convention of a null pointer meaning nothing." },
+    { text: "Zero is not a valid memory address on x86", why: "It is a perfectly valid address. What makes it safe here is that the allocator deliberately never hands it out." },
+    { text: "The caller always checks for zero anyway", why: "The paging code does not check, which is a real gap. The value is safe because of the reservation, not because of caller discipline." },
+    { text: "Because MAX_FRAMES starts counting at one", why: "The loop starts at frame zero. It is the reservation pass that makes that frame unavailable." }
+  ]
+});
+</script>
+</body>
+</html>

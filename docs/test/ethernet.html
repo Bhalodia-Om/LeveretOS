@@ -1,0 +1,446 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>Ethernet frames, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Getting online</div>
+      <h1>Ethernet frames</h1>
+      <p class="lede">Fourteen bytes at the front of every packet that say who it is for, who it is from, and what kind of data follows. Everything above this layer depends on getting those fourteen bytes right.</p>
+
+      <h2>A frame is a header plus a payload</h2>
+      <p>
+        The card sends and receives raw byte sequences. Ethernet is the agreement about what the first few
+        bytes of that sequence mean, so two machines can understand each other.
+      </p>
+
+      <div id="m-frame"></div>
+
+      <p>
+        That is the whole header. Three fields, fourteen bytes, and then whatever data the higher layer
+        wants to send. ARP packets, IP packets and everything else ride inside that payload.
+      </p>
+
+      <div class="box info">
+        <span class="t">What the card adds</span>
+        Real Ethernet also has a preamble before the frame and a checksum after it. The card generates and
+        strips both, so the driver never sees them. That is why the lessons' frames start straight at the
+        destination MAC.
+      </div>
+
+      <h2>MAC addresses</h2>
+      <p>
+        Six bytes identifying a network interface, burned in by the manufacturer. Unlike an IP address, it
+        does not describe where you are, only which card you are.
+      </p>
+
+      <div id="m-mac"></div>
+
+      <p>
+        The card knows its own, which is what the MAC read in the driver lesson was for. The OS stores it
+        once at startup and puts it in the source field of every frame it builds.
+      </p>
+
+      <div id="q-mac"></div>
+
+      <h2>Broadcast</h2>
+      <p>
+        One address is special. All six bytes set to <code>0xFF</code> means every machine on the local
+        network should accept the frame.
+      </p>
+
+      <div id="m-broadcast"></div>
+
+      <p>
+        That is what makes ARP possible. You cannot address a machine whose MAC you do not know yet, so you
+        shout to everyone and wait for the right one to answer.
+      </p>
+
+      <h2>The EtherType</h2>
+      <p>
+        Two bytes saying what kind of data is in the payload. Without it the receiver would have to guess,
+        and there would be no way to run several protocols over the same wire.
+      </p>
+
+      <div id="m-ethertype"></div>
+
+      <p>
+        These values are assigned by a standards body, so every machine agrees. The lessons define two, one
+        for ARP which is used now, and one for IPv4 which the next lesson will need.
+      </p>
+
+      <div id="w-defines"></div>
+
+      <div id="q-type"></div>
+
+      <h2>Byte order matters here</h2>
+      <p>
+        The EtherType is the lessons' first real encounter with network byte order, and getting it backwards
+        fails silently.
+      </p>
+
+      <div id="s-order"></div>
+
+      <p>
+        High byte first, always, for every multi byte field inside a packet. That is the opposite of the
+        hardware register convention from the <a href="endian.html">byte order page</a>, where the low byte
+        goes first.
+      </p>
+
+      <div id="m-typebytes"></div>
+
+      <h2>Why a layer at all</h2>
+      <p>
+        Before this lesson the shell built a frame header by hand, inline, byte by byte. That works once and
+        becomes a liability immediately after.
+      </p>
+
+      <div id="m-why"></div>
+
+      <p>
+        So the lesson introduces two functions that own the header. Everything above them passes a
+        destination, a type and a payload, and never touches byte 12 again.
+      </p>
+
+      <div id="w-header"></div>
+
+      <h2>Sending</h2>
+      <p>
+        Building a frame is filling in three fields then copying the payload after them.
+      </p>
+
+      <div id="s-send"></div>
+
+      <div id="w-send"></div>
+
+      <div id="q-ourmac"></div>
+
+      <h2>Receiving</h2>
+      <p>
+        The reverse: take a raw frame from the driver, pull the header apart, and hand the caller the pieces
+        it needs.
+      </p>
+
+      <div id="w-receive"></div>
+
+      <p>
+        The interesting part is the third parameter. Rather than copying the payload into a caller supplied
+        buffer, the function points the caller at its own internal buffer, which avoids a copy entirely.
+      </p>
+
+      <div id="s-pointer"></div>
+
+      <div id="q-doubleptr"></div>
+
+      <h2>What this layer deliberately does not do</h2>
+      <p>
+        Keeping it small was the point. Several things a real stack would handle are absent, and knowing
+        which ones stops them becoming surprises.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Not handled</th><th>Consequence</th></tr></thead>
+        <tbody>
+          <tr><td>checking the destination MAC on receive</td><td>the card filters most of it in hardware, but the layer hands up anything that arrives without verifying it was addressed to us</td></tr>
+          <tr><td>dispatching by EtherType</td><td>the caller checks the type itself. With only ARP in use that is fine, and a real stack would route to a registered handler</td></tr>
+          <tr><td>a queue of received frames</td><td>one static buffer, reused each call. The caller must finish with the payload before calling receive again</td></tr>
+          <tr><td>VLAN tags</td><td>a tagged frame has four extra bytes before the EtherType, which would be misread as the type. Not present in the emulator</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        The layer exists so ARP and later IP do not each reimplement the header. It does that job in about
+        forty lines, which is the right size for what it is.
+      </p>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("ethernet");
+
+Guide.memMap("m-frame", {
+  title: "The 14 byte header, click each field",
+  segments: [
+    { label: "bytes 0 to 5", weight: 2, addr: "destination MAC", desc: "Which card should accept this frame. Six bytes. All 0xFF means broadcast, so every machine on the local network takes it. This comes first so a card can decide whether to bother with the rest." },
+    { label: "bytes 6 to 11", weight: 2, addr: "source MAC", desc: "Which card sent it, so the receiver knows where to reply. The driver fills this in from the card's own address, read out of the card at startup." },
+    { label: "bytes 12 to 13", weight: 1, addr: "EtherType", desc: "What kind of data the payload holds. 0x0806 for ARP, 0x0800 for IPv4. Stored high byte first, which is network byte order." },
+    { label: "bytes 14 onward", weight: 4, addr: "the payload", desc: "The actual content. An ARP packet is 28 bytes, an IP packet is variable. Up to 1500 bytes, which is where the 1514 byte maximum frame size comes from." }
+  ],
+  hint: "Destination before source, because a card checks whether a frame is for it before reading anything else."
+});
+
+Guide.memMap("m-mac", {
+  title: "A MAC address, click each part",
+  segments: [
+    { label: "first 3 bytes", weight: 1, addr: "the manufacturer", desc: "Assigned to a company by a standards body, so every card from that maker shares this prefix. 52:54:00 is what QEMU uses for its emulated cards, and 52:55 appears on its virtual gateway." },
+    { label: "last 3 bytes", weight: 1, addr: "the specific card", desc: "Chosen by the manufacturer so each card they make is unique. Combined with the prefix, the full six bytes should be unique worldwide." }
+  ],
+  hint: "A MAC says which card you are, not where you are. That difference is the entire reason ARP exists."
+});
+
+Guide.bitfield("m-broadcast", {
+  title: "One byte of the broadcast address",
+  intro: "Broadcast is all six bytes set to 0xFF. Click the bits to build one of them.",
+  width: 8,
+  value: 0xFF,
+  fields: [
+    { bits: [7, 0], name: "all eight bits", desc: "every bit set gives 0xFF. Six bytes of this is the broadcast address" }
+  ],
+  match: {
+    "255": "0xFF, one byte of the broadcast address. Six of these means every machine accepts the frame",
+    "0": "0x00, which appears in the target MAC field of an ARP request, meaning unknown rather than broadcast",
+    "82": "0x52, the first byte of QEMU's emulated MAC addresses"
+  }
+});
+
+Guide.memMap("m-ethertype", {
+  title: "EtherType values, click each",
+  segments: [
+    { label: "0x0806", weight: 1, addr: "ARP", desc: "The payload is an ARP packet, asking for or supplying a MAC address. The only type the lessons send so far, and the one the ARP lesson uses." },
+    { label: "0x0800", weight: 1, addr: "IPv4", desc: "The payload is an IP packet. Defined in the lessons' header ready for the next networking lesson, though nothing sends it yet." },
+    { label: "0x86DD", weight: 1, addr: "IPv6", desc: "The modern addressing scheme. Out of scope for the lessons, which stay on IPv4 throughout." },
+    { label: "0xABCD", weight: 1, addr: "not a real type", desc: "The arbitrary value the earlier test frame used. No protocol owns it, so any receiver would recognise nothing and drop the frame. Fine for a send only test, useless for real traffic." }
+  ],
+  hint: "Assigned by a standards body so every machine agrees. A receiver uses this to decide which code should handle the payload."
+});
+
+Guide.codeWalk("w-defines", {
+  title: "The interface, from ethernet.h",
+  code: "#define ETHERTYPE_ARP  0x0806\n#define ETHERTYPE_IPV4 0x0800\n\nvoid eth_send(const uint8_t dest_mac[6], uint16_t ethertype,\n              const uint8_t* payload, uint16_t length);\n\nuint16_t eth_receive(uint8_t src_mac_out[6], uint16_t* ethertype_out,\n                     uint8_t** payload_out);",
+  notes: [
+    { lines: [1, 2], text: "Named constants rather than raw hex at call sites. eth_send(broadcast, ETHERTYPE_ARP, packet, 28) reads as a description of intent." },
+    { lines: [4, 5], text: "Four parameters covering everything the header needs. The destination and type are the caller's decision, while the source MAC is filled in by the layer itself." },
+    { lines: [5, 5], text: "The payload is const, since the layer only reads it. The caller keeps ownership of that memory and the layer never holds a reference to it." },
+    { lines: [7, 8], text: "Three results come back through parameters plus one as the return value, which is the output parameter pattern from the C++ page. The double star on payload_out is a pointer to a pointer." }
+  ]
+});
+
+Guide.stepper("s-order", {
+  title: "Getting the EtherType byte order wrong",
+  steps: [
+    {
+      head: "The value is 0x0806",
+      text: "A 16 bit number meaning ARP. On x86 that sits in memory low byte first, as 06 08, because the CPU is little endian.",
+      state: { "value": "0x0806", "in CPU memory": "06 08" }
+    },
+    {
+      head: "The network wants high byte first",
+      text: "Every multi byte field inside a packet is big endian. So on the wire it must appear as 08 06, the opposite of how the CPU stores it.",
+      state: { "required on the wire": "08 06" }
+    },
+    {
+      head: "So the bytes are written out by hand",
+      text: "Shift down eight for the high byte and write it first, then mask for the low byte and write it second. The CPU's own layout is never relied upon.",
+      code: "frame[12] = (ethertype >> 8) & 0xFF;   // 0x08\nframe[13] = ethertype & 0xFF;          // 0x06",
+      state: { "on the wire": "08 06, correct" }
+    },
+    {
+      head: "Reversing them sends 06 08",
+      text: "The receiver reads that as 0x0608, which no protocol owns.",
+      code: "frame[12] = ethertype & 0xFF;          // 0x06, wrong\nframe[13] = (ethertype >> 8) & 0xFF;   // 0x08",
+      state: { "receiver reads": "0x0608", "recognised": "no" }
+    },
+    {
+      head: "And the failure is completely silent",
+      text: "The receiving machine does not recognise the type, so it discards the frame without complaint. No error, no reply, nothing on screen. The OS waits for a response that will never come.",
+      state: { "symptom": "silence", "error message": "none" }
+    }
+  ],
+  hint: "The lesson overview flags this as the classic networking mistake, because there is no feedback at all when you get it wrong."
+});
+
+Guide.packBuilder("m-typebytes", {
+  title: "Split an EtherType for the wire",
+  intro: "Type a 16 bit value and see the two bytes in network order. Try 0x0806 for ARP or 0x0800 for IPv4.",
+  label: "EtherType:",
+  value: "0x0806",
+  srcBits: 16,
+  parts: [
+    { label: "frame[12], high byte", expr: "(type >> 8) & 0xFF", calc: function (v) { return (v >>> 8) & 0xFF; } },
+    { label: "frame[13], low byte", expr: "type & 0xFF", calc: function (v) { return v & 0xFF; } },
+    { label: "if reversed, frame[12]", expr: "type & 0xFF", calc: function (v) { return v & 0xFF; } },
+    { label: "if reversed, frame[13]", expr: "(type >> 8) & 0xFF", calc: function (v) { return (v >>> 8) & 0xFF; } }
+  ],
+  hint: "The first two cells are correct network order. The last two show what a reversed version would put on the wire, which the receiver would silently drop."
+});
+
+Guide.memMap("m-why", {
+  title: "Before and after the layer, click each",
+  segments: [
+    { label: "before, inline in the shell", weight: 1, addr: "the net command", desc: "The test command built the header by hand: a loop for the destination, another for the source, then frame[12] and frame[13] set individually. Fine once, but every protocol above would have to repeat all of it and each copy could get the byte order wrong independently." },
+    { label: "after, one function owns it", weight: 1, addr: "eth_send", desc: "Callers pass a destination, a type and a payload. The header is built in exactly one place, so there is one implementation of the byte order to get right and one place to fix if it is wrong." }
+  ],
+  hint: "ARP, and later IP, both call eth_send. Neither knows that byte 12 exists."
+});
+
+Guide.codeWalk("w-header", {
+  title: "The internals, from ethernet.cpp",
+  code: "#define ETH_HEADER_LEN 14\n\nstatic uint8_t rx_frame[1600];",
+  notes: [
+    { lines: [1, 1], text: "Named rather than a bare 14 scattered through the file. It appears in the payload offset, the total length calculation and the minimum length check." },
+    { lines: [3, 3], text: "One static buffer reused for every received frame, so eth_receive can hand out a pointer into it without allocating anything." },
+    { lines: [3, 3], text: "1600 bytes is comfortably above the 1514 byte maximum frame, leaving room rather than sitting exactly on the limit." },
+    { lines: [3, 3], text: "Being static means it is reused, so the caller must finish with one payload before calling receive again. With a single caller that is easy to guarantee." }
+  ]
+});
+
+Guide.stepper("s-send", {
+  title: "Building an ARP frame",
+  steps: [
+    {
+      head: "ARP asks for a frame to be sent",
+      text: "It supplies the broadcast destination, the ARP type, and its 28 byte packet. It knows nothing about the header format.",
+      code: "uint8_t broadcast[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };\neth_send(broadcast, ETHERTYPE_ARP, request, 28);",
+      state: { "payload": "28 bytes", "total frame": "42 bytes once the header is added" }
+    },
+    {
+      head: "Copy the destination into bytes 0 to 5",
+      text: "Straight from the caller's array. All 0xFF here, because ARP does not know who to ask yet.",
+      code: "for (int i = 0; i < 6; i++) frame[i] = dest_mac[i];",
+      state: { "bytes 0 to 5": "ff ff ff ff ff ff" }
+    },
+    {
+      head: "Ask the driver for our own MAC",
+      text: "The source is not a parameter. The layer fetches it from the card, so no caller can get it wrong or spoof it by accident.",
+      code: "uint8_t our_mac[6];\nne2000_get_mac(our_mac);\nfor (int i = 0; i < 6; i++) frame[6 + i] = our_mac[i];",
+      state: { "bytes 6 to 11": "52 54 00 12 34 56" }
+    },
+    {
+      head: "Write the EtherType high byte first",
+      text: "Two bytes in network order. This is the one place in the layer where byte order matters, and it is written explicitly rather than relying on the CPU's layout.",
+      code: "frame[12] = (ethertype >> 8) & 0xFF;\nframe[13] = ethertype & 0xFF;",
+      state: { "bytes 12 to 13": "08 06" }
+    },
+    {
+      head: "Copy the payload after the header",
+      text: "Starting at offset 14, immediately past the header. The ARP packet's own first byte becomes frame byte 14.",
+      code: "for (uint16_t i = 0; i < length; i++) {\n    frame[ETH_HEADER_LEN + i] = payload[i];\n}",
+      state: { "bytes 14 to 41": "the ARP packet" }
+    },
+    {
+      head: "Hand the whole thing to the driver",
+      text: "Header plus payload as one length. The driver pads it to the 60 byte minimum and transmits.",
+      code: "ne2000_send(frame, ETH_HEADER_LEN + length);",
+      state: { "sent": "42 bytes, padded to 60 by the driver" }
+    }
+  ],
+  hint: "The captured frame on the byte order page is exactly this, 42 bytes padded out to 60 with zeros."
+});
+
+Guide.codeWalk("w-send", {
+  title: "eth_send, from ethernet.cpp",
+  code: "void eth_send(const uint8_t dest_mac[6], uint16_t ethertype,\n              const uint8_t* payload, uint16_t length) {\n    uint8_t frame[1600];\n\n    for (int i = 0; i < 6; i++) frame[i] = dest_mac[i];\n\n    uint8_t our_mac[6];\n    ne2000_get_mac(our_mac);\n    for (int i = 0; i < 6; i++) frame[6 + i] = our_mac[i];\n\n    frame[12] = (ethertype >> 8) & 0xFF;\n    frame[13] = ethertype & 0xFF;\n\n    for (uint16_t i = 0; i < length; i++) {\n        frame[ETH_HEADER_LEN + i] = payload[i];\n    }\n\n    ne2000_send(frame, ETH_HEADER_LEN + length);\n}",
+  notes: [
+    { lines: [3, 3], text: "A local buffer on the stack. The kernel's stack is 16 KB so 1600 bytes fits, though a larger frame size would need rethinking this." },
+    { lines: [5, 5], text: "Destination first, matching the wire layout. Building the frame in field order keeps the code readable against the spec." },
+    { lines: [7, 9], text: "The source MAC is fetched rather than passed in. That means no caller can accidentally send a frame claiming to be from somewhere else." },
+    { lines: [11, 12], text: "High byte to the lower offset. The only byte order decision in the function, and the one that fails silently if reversed." },
+    { lines: [14, 16], text: "Payload copied to offset 14 onward. A memcpy would be faster but the loop is clearer and the frames here are small." },
+    { lines: [18, 18], text: "The total length is header plus payload. Passing only the payload length would truncate the frame and cut off the last fourteen bytes of real data." }
+  ]
+});
+
+Guide.codeWalk("w-receive", {
+  title: "eth_receive, from ethernet.cpp",
+  code: "uint16_t eth_receive(uint8_t src_mac_out[6], uint16_t* ethertype_out,\n                     uint8_t** payload_out) {\n    uint16_t total = ne2000_receive(rx_frame);\n    if (total < ETH_HEADER_LEN) return 0;\n\n    for (int i = 0; i < 6; i++) src_mac_out[i] = rx_frame[6 + i];\n\n    *ethertype_out = ((uint16_t)rx_frame[12] << 8) | rx_frame[13];\n\n    *payload_out = &rx_frame[ETH_HEADER_LEN];\n\n    return total - ETH_HEADER_LEN;\n}",
+  notes: [
+    { lines: [3, 3], text: "Ask the driver for a frame into the static buffer. Zero means nothing arrived, which is the common case when polling." },
+    { lines: [4, 4], text: "Anything shorter than the header cannot be a valid frame. This also guards the reads below, since indexing byte 12 of a shorter frame would read past what was received." },
+    { lines: [6, 6], text: "The source MAC from bytes 6 to 11. ARP uses this to know where to send a reply, though it also appears inside the ARP packet itself." },
+    { lines: [8, 8], text: "Reassemble the EtherType from network order. Byte 12 shifts up to become the high half, byte 13 sits underneath as the low half." },
+    { lines: [8, 8], text: "The cast to uint16_t before shifting matters. Shifting a uint8_t left by eight would overflow it and lose the byte entirely." },
+    { lines: [10, 10], text: "Point the caller at byte 14 of the internal buffer. No copy happens, the caller reads directly from where the driver placed the data." },
+    { lines: [12, 12], text: "The payload length is the total minus the header. The caller uses this to know how many bytes are valid at the pointer it was given." }
+  ]
+});
+
+Guide.stepper("s-pointer", {
+  title: "Handing back a pointer instead of copying",
+  steps: [
+    {
+      head: "The caller declares an empty pointer",
+      text: "Not a buffer, just a pointer variable with nothing in it yet.",
+      code: "uint8_t* payload;",
+      state: { "payload": "uninitialised" }
+    },
+    {
+      head: "And passes its address",
+      text: "The ampersand takes the address of the pointer itself, so the function receives a pointer to a pointer. That is what the double star in the signature means.",
+      code: "eth_receive(src_mac, &ethertype, &payload);",
+      state: { "function receives": "the address of the caller's pointer" }
+    },
+    {
+      head: "The function writes through it",
+      text: "The star follows the address back to the caller's variable and stores a value there. That value is the address of byte 14 in the internal buffer.",
+      code: "*payload_out = &rx_frame[ETH_HEADER_LEN];",
+      state: { "caller's payload": "now points into rx_frame" }
+    },
+    {
+      head: "The caller reads directly",
+      text: "No bytes were copied anywhere. The caller is reading the same memory the driver wrote into, which is why this is cheap.",
+      code: "uint16_t op = ((uint16_t)payload[6] << 8) | payload[7];",
+      state: { "copies made": "zero" }
+    },
+    {
+      head: "The cost is a shared buffer",
+      text: "The pointer is only valid until the next call to eth_receive, which overwrites the buffer. With one caller polling in a loop that is easy to respect, and a multi caller design would need a real queue.",
+      state: { "constraint": "use it before calling receive again" }
+    }
+  ],
+  hint: "Two stars looks alarming and is just one more level of the same idea. Address of to give, star to write through."
+});
+
+Guide.quiz("q-mac", {
+  question: "Why does a frame need a MAC address if the packet inside already has an IP address?",
+  options: [
+    { text: "The card only understands MAC addresses. IP is a higher layer the hardware knows nothing about", correct: true, why: "Right. The network card decides whether to accept a frame by looking at the destination MAC, before anything inspects the payload. IP addressing is software built on top. That gap between the two is exactly what ARP exists to bridge." },
+    { text: "For redundancy, in case the IP address is wrong", why: "They serve different purposes rather than backing each other up. One identifies a card on the local wire, the other identifies a host anywhere." },
+    { text: "Because IP addresses change but MACs do not", why: "True in practice, but not the reason. The reason is that the hardware only works in MAC addresses." },
+    { text: "The MAC is a checksum over the IP header", why: "It is a manufacturer assigned identifier with no relationship to the payload." }
+  ]
+});
+
+Guide.quiz("q-type", {
+  question: "A frame arrives with EtherType 0xABCD. What does a normal machine do with it?",
+  options: [
+    { text: "Drops it, because no protocol is registered for that type", correct: true, why: "Correct. The receiver looks up the type to decide which code should handle the payload. 0xABCD is not assigned to anything, so there is no handler and the frame is discarded silently. That is exactly what happened to the earlier test frame, which is fine for a send only test." },
+    { text: "Treats it as raw data and passes it to the application", why: "There is no default handler. An unrecognised type means the frame has nowhere to go." },
+    { text: "Replies with an error frame", why: "Ethernet has no error reply mechanism. Unrecognised frames vanish without acknowledgement." },
+    { text: "Interprets it as IPv4, the default", why: "There is no default. IPv4 has its own type, 0x0800, and nothing is assumed." }
+  ]
+});
+
+Guide.quiz("q-ourmac", {
+  question: "Why does eth_send fetch the source MAC itself rather than taking it as a parameter?",
+  options: [
+    { text: "There is only one correct value, so asking the caller invites mistakes", correct: true, why: "Right. The source is always this machine's own MAC, which the driver already knows from reading it out of the card. Making it a parameter would let a caller pass the wrong value or accidentally spoof another machine, with no benefit at all." },
+    { text: "Because the caller cannot access the driver", why: "Any caller could call ne2000_get_mac. The point is that it should not need to." },
+    { text: "To keep the parameter count under four", why: "A style preference at best. The real reason is correctness." },
+    { text: "The card overwrites the source field anyway", why: "It does not. Whatever the driver puts in bytes 6 to 11 goes out on the wire unchanged, which is precisely why the layer should control it." }
+  ]
+});
+
+Guide.quiz("q-doubleptr", {
+  question: "What does uint8_t** payload_out let the function do that uint8_t* could not?",
+  options: [
+    { text: "Change where the caller's pointer points, rather than writing into memory the caller already chose", correct: true, why: "Correct. With a single star the function would receive a buffer and copy bytes into it. With a double star it receives the address of the caller's pointer variable and can set that pointer to somewhere else, in this case into the internal receive buffer. No copy happens at all." },
+    { text: "Pass more than one byte at a time", why: "A single pointer already addresses as many bytes as you like. The extra level is about redirecting the pointer itself." },
+    { text: "Make the payload read only", why: "That would be a const qualifier. The double star is about indirection, not permissions." },
+    { text: "Return two payloads", why: "Only one pointer is set. The extra level lets the function modify the caller's pointer rather than the data behind it." }
+  ]
+});
+</script>
+</body>
+</html>

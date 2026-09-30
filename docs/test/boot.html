@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>Boot and the linker, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Getting on screen</div>
+      <h1>Boot and the linker</h1>
+      <p class="lede">Before a single line of your C++ runs, something has to load it into memory and give it a stack. This page is about that handover, and about the file that decides where everything lands.</p>
+
+      <h2>Who starts what</h2>
+      <p>
+        When a machine powers on, the CPU does not know what an operating system is. It runs firmware
+        from a chip on the motherboard, that firmware finds a bootable disc, and a bootloader takes
+        over from there. Only then does your code get a turn.
+      </p>
+      <p>
+        The lessons use GRUB as the bootloader, so there are four players in the handover.
+      </p>
+
+      <div id="s-chain"></div>
+
+      <p>
+        The important thing to notice is that by the time <code>kernel_main</code> runs, a great deal
+        has already happened that you did not write. The CPU is already in 32 bit protected mode,
+        because GRUB switched it there. Memory has already been surveyed. Your kernel has already been
+        copied to a specific address. All of that is GRUB doing its job.
+      </p>
+
+      <h2>The multiboot header, how GRUB recognises a kernel</h2>
+      <p>
+        GRUB will not load an arbitrary file. It scans the first few kilobytes looking for a magic
+        number, a specific pattern that says "this is a kernel that speaks multiboot". If it does not
+        find it, it refuses to boot.
+      </p>
+
+      <div id="w-mbheader"></div>
+
+      <p>
+        The checksum is the part that looks strange. GRUB adds the magic, the flags and the checksum
+        together and requires the result to be zero. So the checksum is defined as the negative of
+        the other two added up. It is a cheap way for GRUB to confirm it found a real header rather
+        than three bytes that happened to look right.
+      </p>
+
+      <div class="box info">
+        <span class="t">Why the header must come first</span>
+        GRUB only scans the beginning of the file. The linker script puts the
+        <code>.multiboot</code> section at the very start of <code>.text</code> for exactly this
+        reason. Bury it deeper and GRUB never sees it.
+      </div>
+
+      <h2>Sections, and what the linker is actually doing</h2>
+      <p>
+        A compiled program is not one undifferentiated blob. The compiler sorts everything into
+        sections by what kind of thing it is, and the linker decides where each section sits in the
+        final binary.
+      </p>
+
+      <div id="m-sections"></div>
+
+      <p>
+        The distinction between <code>.data</code> and <code>.bss</code> is worth pausing on, because
+        it saves real space. A variable initialised to a specific value has to have that value stored
+        in the file. A variable initialised to zero does not, the loader can simply zero the memory.
+        So <code>.bss</code> takes up address space but almost no file space.
+      </p>
+      <p>
+        That is why the PMM's bitmap is essentially free on disc. It is a 128 KB array in
+        <code>.bss</code>, and the heap's 1 MB buffer is the same. Neither one inflates the ISO.
+      </p>
+
+      <h2>Reading the linker script</h2>
+      <p>
+        The linker script is the file that lays all this out. It is a small language of its own, and
+        the lessons use only a handful of its features.
+      </p>
+
+      <div id="w-linker"></div>
+
+      <p>
+        The <code>.</code> is the key idea. It is a cursor holding the current output address. Setting
+        it to <code>1M</code> starts the layout at 1 megabyte. As each section is placed, the cursor
+        advances past it. So by the end of the script, the cursor sits just past everything, and
+        naming that position gives you the end of the kernel.
+      </p>
+
+      <div class="box">
+        <span class="t">Why 1 MB</span>
+        The first megabyte of memory on a PC is a museum of legacy hardware: the video buffer, BIOS
+        data, memory mapped devices. Loading above it avoids landing on top of any of that.
+      </div>
+
+      <h2>kernel_end, the symbol that protects the kernel</h2>
+      <p>
+        That last line of the linker script exists for one purpose. The physical memory manager needs
+        to know which memory it must never hand out, and the answer is "everything the kernel
+        occupies". The linker knows where that ends, so it tells the code.
+      </p>
+
+      <div id="w-kernelend"></div>
+
+      <p>
+        There is no variable called <code>kernel_end</code> anywhere in the C++ source. The
+        <code>extern</code> declares that the symbol exists elsewhere, and the linker provides it at
+        link time. Taking its address gives you the number the script computed.
+      </p>
+
+      <div id="q-kend"></div>
+
+      <h2>Why the first code must be assembly</h2>
+      <p>
+        <code>boot.s</code> is short, and everything in it is something C++ cannot do.
+      </p>
+
+      <div id="w-boots"></div>
+
+      <p>
+        The stack is the blocker. C++ needs a stack for local variables and function calls, but
+        setting the stack pointer <em>is</em> a function call's worth of work. You cannot bootstrap a
+        stack from a language that assumes one exists. So assembly points the stack pointer at a
+        reserved block, and from that instruction onward C++ is viable.
+      </p>
+
+      <div class="box warn">
+        <span class="t">The stack grows downward</span>
+        <code>esp</code> is set to <code>stack_top</code>, the high address, not the bottom. Each push
+        moves it <em>down</em> toward <code>stack_bottom</code>. Point it at the bottom instead and
+        the first push walks off into whatever sits below, corrupting memory in a way that is very
+        hard to diagnose.
+      </div>
+
+      <h2>Passing GRUB's memory map along</h2>
+      <p>
+        GRUB leaves a pointer to its information structure in the <code>ebx</code> register. That
+        register is not preserved forever, so <code>boot.s</code> has to hand it over immediately.
+      </p>
+
+      <div id="s-ebx"></div>
+
+      <p>
+        On 32 bit x86, function arguments arrive on the stack. Pushing <code>ebx</code> just before
+        the call means the value appears as <code>kernel_main</code>'s first parameter. That is the
+        entire mechanism behind the <code>multiboot_info_addr</code> argument, and it is why the PMM
+        can read GRUB's memory map at all.
+      </p>
+
+      <div id="q-ebx"></div>
+
+      <h2>The hang at the end</h2>
+      <p>
+        The last three instructions in <code>boot.s</code> only run if <code>kernel_main</code>
+        somehow returns, which it should not because the shell loops forever. It is a safety net.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">Stopping safely</div>
+        <div class="st-code">.hang:
+    cli          ; disable interrupts, so nothing wakes us
+    hlt          ; halt the CPU until an interrupt arrives
+    jmp .hang    ; if something wakes it anyway, halt again</div>
+        <div class="hint">cli then hlt is the standard way to stop a CPU dead. The jump back exists because a non maskable interrupt can resume execution past hlt, and without the loop the CPU would run off into whatever bytes follow.</div>
+      </div>
+
+      <p>
+        The same pattern appears in the exception handler in <code>idt.cpp</code>. When the CPU hits
+        an unrecoverable fault, the handler prints what happened and then parks in exactly this loop,
+        because continuing would be worse than stopping.
+      </p>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("boot");
+
+Guide.stepper("s-chain", {
+  title: "The boot chain, step through the handover",
+  steps: [
+    {
+      head: "Firmware wakes up the machine",
+      text: "The BIOS runs from a chip on the motherboard. It checks the hardware is alive, then looks for something bootable. It knows nothing about your OS.",
+      state: { "CPU mode": "16 bit real mode", "your code": "not running" }
+    },
+    {
+      head: "The disc is found and GRUB loads",
+      text: "The firmware finds the bootable ISO and loads GRUB from it. GRUB is a full program with a config file, a menu and the ability to understand kernel formats.",
+      code: "set timeout=0\nset default=0\nmenuentry \"LeveretOS\" {\n    multiboot /boot/kernel.bin\n    boot\n}",
+      state: { "CPU mode": "16 bit real mode", "your code": "still not running" }
+    },
+    {
+      head: "GRUB switches the CPU to 32 bit protected mode",
+      text: "This is a large favour. Protected mode is what gives you 32 bit registers, memory protection and segmentation. Doing the switch yourself would be several hundred lines of delicate assembly.",
+      state: { "CPU mode": "32 bit protected mode", "your code": "not yet" }
+    },
+    {
+      head: "GRUB surveys memory and loads the kernel",
+      text: "GRUB asks the firmware which memory regions are real RAM and which are reserved, writes that list into memory, then copies your kernel to the address the linker script asked for.",
+      state: { "kernel at": "0x100000, which is 1 MB", "memory map": "written to RAM by GRUB" }
+    },
+    {
+      head: "GRUB jumps to _start in boot.s",
+      text: "Control finally reaches your code. GRUB leaves a pointer to its info structure in the ebx register, and it is your job to keep hold of it.",
+      code: "section .text\nglobal _start\n\n_start:",
+      state: { "running": "boot.s", "ebx": "pointer to GRUB's info", "stack": "none yet" }
+    },
+    {
+      head: "boot.s sets up a stack",
+      text: "C++ cannot run without a stack, so the very first instruction points the stack pointer at a 16 KB block reserved in .bss.",
+      code: "mov esp, stack_top",
+      state: { "running": "boot.s", "stack": "16 KB, ready" }
+    },
+    {
+      head: "boot.s calls kernel_main",
+      text: "It pushes the GRUB pointer so it becomes the function's argument, then calls into C++. From here on everything is code you wrote in a language you recognise.",
+      code: "push ebx\ncall kernel_main",
+      state: { "running": "kernel.cpp", "argument": "multiboot_info_addr" }
+    }
+  ],
+  hint: "Notice how much is already done for you by step 5. GRUB handles real mode, the mode switch, and the memory survey."
+});
+
+Guide.codeWalk("w-mbheader", {
+  title: "The multiboot header, from boot.s",
+  code: "MBALIGN  equ 1 << 0\nMEMINFO  equ 1 << 1\nMBFLAGS  equ MBALIGN | MEMINFO\nMAGIC    equ 0x1BADB002\nCHECKSUM equ - (MAGIC + MBFLAGS)\n\nsection .multiboot\nalign 4\n    dd MAGIC\n    dd MBFLAGS\n    dd CHECKSUM",
+  notes: [
+    { lines: [1, 1], text: "1 << 0 is bit 0, worth 1. It asks GRUB to align loaded modules on page boundaries. Written as a shift rather than 1 so the bit position is obvious." },
+    { lines: [2, 2], text: "1 << 1 is bit 1, worth 2. This is the flag that asks GRUB for the memory map. Without it the PMM would have nothing to read." },
+    { lines: [3, 3], text: "OR the two flags together into one value, exactly the flag packing pattern from the flags page. The result is 3." },
+    { lines: [4, 4], text: "The magic number is fixed by the multiboot specification. GRUB scans for these exact four bytes to recognise a kernel." },
+    { lines: [5, 5], text: "The checksum is the negative of magic plus flags. GRUB adds all three fields and requires zero, which proves the header is genuine rather than a coincidence." },
+    { lines: [7, 8], text: "A named section so the linker script can place it first, aligned to 4 bytes because GRUB expects 32 bit fields." },
+    { lines: [9, 11], text: "dd means define doubleword, a 32 bit value. These three lines are the entire header, twelve bytes at the start of the kernel." }
+  ]
+});
+
+Guide.memMap("m-sections", {
+  title: "Sections in the final kernel, click each one",
+  segments: [
+    { label: ".multiboot", weight: 1, addr: "at 1 MB", desc: "The twelve byte header GRUB scans for. Placed first so it is found. Written by boot.s." },
+    { label: ".text", weight: 6, addr: "after the header", desc: "Executable machine code. Every compiled function lives here: kernel_main, the VGA driver, the network code. Read only at runtime." },
+    { label: ".rodata", weight: 2, addr: "next 4 KB boundary", desc: "Read only data. String literals like \"Type 'help' for a list of commands\" and constant tables such as the exception name array." },
+    { label: ".data", weight: 1, addr: "next 4 KB boundary", desc: "Variables with a starting value that is not zero. Their initial contents have to be stored in the file, so this section costs real space." },
+    { label: ".bss", weight: 7, addr: "next 4 KB boundary", desc: "Variables that start at zero. Takes up address space but almost nothing in the file, because the loader just zeroes it. The PMM bitmap and the heap's 1 MB buffer both live here." },
+    { label: "kernel_end", weight: 1, addr: "the cursor's final value", desc: "Not a section, a marker. The linker records the address just past everything, and the PMM reserves all frames below it so the kernel can never be handed out as free memory." }
+  ],
+  hint: "Each section is aligned to a 4 KB boundary, which matches the page size paging will use later."
+});
+
+Guide.codeWalk("w-linker", {
+  title: "linker.ld, the layout rules",
+  code: "ENTRY(_start)\n\nSECTIONS\n{\n    . = 1M;\n\n    .text ALIGN(4K) :\n    {\n        *(.multiboot)\n        *(.text)\n    }\n\n    .rodata ALIGN(4K) : { *(.rodata) }\n    .data   ALIGN(4K) : { *(.data) }\n    .bss    ALIGN(4K) : { *(COMMON) *(.bss) }\n\n    kernel_end = .;\n}",
+  notes: [
+    { lines: [1, 1], text: "Names the entry point. Execution begins at the _start label in boot.s, not at main or kernel_main." },
+    { lines: [5, 5], text: "The dot is the location counter, a cursor holding the current output address. Setting it to 1M starts the layout at one megabyte, above all the legacy hardware in low memory." },
+    { lines: [7, 7], text: "ALIGN(4K) rounds the cursor up to the next 4096 byte boundary before placing this section. That matches the page size, which makes later paging work tidier." },
+    { lines: [9, 9], text: "The star means every input file. So this collects the .multiboot section from all object files and puts it first, which is what lets GRUB find the header." },
+    { lines: [10, 10], text: "Then all the executable code. Order matters inside a section: whatever is listed first ends up at the lower address." },
+    { lines: [14, 14], text: "COMMON holds uninitialised globals the compiler could not assign to a specific file. Grouping it with .bss keeps all the zeroed memory together." },
+    { lines: [16, 16], text: "By now the cursor has advanced past every section, so it holds the address just past the end of the kernel. Naming it creates a symbol the C++ code can read." }
+  ],
+  hint: "The whole script is four placements and one named address. That is all the layout control the kernel needs."
+});
+
+Guide.codeWalk("w-kernelend", {
+  title: "Using kernel_end from C++, in pmm.cpp",
+  code: "extern \"C\" uint8_t kernel_end;\n\n// ... later, after freeing all usable RAM:\n\nuint32_t kernel_last_frame = ((uint32_t)&kernel_end) / FRAME_SIZE;\nfor (uint32_t frame = 0; frame <= kernel_last_frame; frame++) {\n    if (!bitmap_test(frame)) {\n        bitmap_set(frame);\n        used_frames++;\n    }\n}",
+  notes: [
+    { lines: [1, 1], text: "There is no such variable in any source file. extern says the symbol comes from elsewhere, and the linker supplies it. The uint8_t type is arbitrary, only the address matters." },
+    { lines: [5, 5], text: "Taking the address gives the number the linker script computed. Dividing by 4096 converts it to a frame number, since frames are 4 KB each." },
+    { lines: [6, 6], text: "Loop over every frame from address zero up to and including the kernel's last frame. Less than or equal, not less than, so the partially used final frame is included." },
+    { lines: [7, 10], text: "Mark each one used. The check avoids double counting frames that were already reserved, which would corrupt the used total." }
+  ],
+  hint: "If this loop were missing, alloc_frame could hand out memory the kernel is running from, and the OS would overwrite itself."
+});
+
+Guide.codeWalk("w-boots", {
+  title: "All of boot.s, and why each part cannot be C++",
+  code: "section .bss\nalign 16\nstack_bottom:\n    resb 16384\nstack_top:\n\nsection .text\nglobal _start\n\n_start:\n    mov esp, stack_top\n\n    extern kernel_main\n    push ebx\n    call kernel_main\n\n.hang:\n    cli\n    hlt\n    jmp .hang",
+  notes: [
+    { lines: [1, 5], text: "Reserve 16 KB for the stack in .bss, so it costs nothing in the file. The two labels mark the ends. resb means reserve bytes." },
+    { lines: [2, 2], text: "align 16 puts the stack on a 16 byte boundary, which the calling convention expects for certain instructions." },
+    { lines: [8, 8], text: "global makes _start visible to the linker, which needs it because ENTRY(_start) in the linker script names it as the entry point." },
+    { lines: [11, 11], text: "The one thing C++ absolutely cannot do. Setting the stack pointer requires a working stack in any higher level language, so it is a chicken and egg problem only assembly can break." },
+    { lines: [13, 13], text: "extern tells the assembler kernel_main exists in another file. The C++ side marks it extern \"C\" so the names match exactly." },
+    { lines: [14, 14], text: "Pushing ebx puts GRUB's info pointer on the stack, where it becomes the first argument to kernel_main. This is how the 32 bit calling convention passes parameters." },
+    { lines: [17, 20], text: "A safety net. If kernel_main ever returns, stop the CPU rather than execute whatever bytes follow. The jump back handles interrupts that can resume past hlt." }
+  ],
+  hint: "Roughly twenty lines, and every one of them does something C++ has no way to express."
+});
+
+Guide.stepper("s-ebx", {
+  title: "How the memory map reaches the PMM",
+  steps: [
+    {
+      head: "GRUB writes the memory map into RAM",
+      text: "Before jumping to your kernel, GRUB asks the firmware which regions are usable RAM and which are reserved, then writes that list somewhere in memory.",
+      state: { "ebx": "address of the info structure" }
+    },
+    {
+      head: "boot.s pushes ebx",
+      text: "The register will not stay untouched forever, so the value goes on the stack straight away, right before the call.",
+      code: "push ebx\ncall kernel_main",
+      state: { "stack top": "GRUB's info address" }
+    },
+    {
+      head: "kernel_main receives it as a parameter",
+      text: "On 32 bit x86 arguments arrive on the stack, so the pushed value shows up as the function's first argument with no extra work.",
+      code: "extern \"C\" void kernel_main(uint32_t multiboot_info_addr) {",
+      state: { "multiboot_info_addr": "GRUB's info address" }
+    },
+    {
+      head: "kernel_main hands it to pmm_init",
+      text: "The kernel does not interpret the pointer itself, it passes it on to the one module that cares.",
+      code: "pmm_init(multiboot_info_addr);",
+      state: { "who reads it": "pmm.cpp" }
+    },
+    {
+      head: "The PMM casts it to a struct and walks the list",
+      text: "The bytes already exist, written by GRUB. Casting chooses how to interpret them, then the loop steps through each region marking usable RAM as free.",
+      code: "MultibootInfo* mboot = (MultibootInfo*)multiboot_info_addr;\nwhile (offset < mboot->mmap_length) { /* ... */ }",
+      state: { "result": "a bitmap of free frames" }
+    }
+  ],
+  hint: "One register value, handed along four times, becomes the OS's entire picture of physical memory."
+});
+
+Guide.quiz("q-kend", {
+  question: "Why does the PMM need kernel_end from the linker instead of a fixed number?",
+  options: [
+    { text: "The kernel's size changes every time you add code, so only the linker knows where it ends", correct: true, why: "Right. Every lesson adds source files and the binary grows. A hardcoded address would silently become wrong, and the PMM would start handing out memory the kernel is using." },
+    { text: "The CPU requires the value to come from the linker", why: "The CPU has no opinion about this. It is purely a bookkeeping value for our own allocator." },
+    { text: "Because the kernel is loaded at a different address each boot", why: "The linker script pins it at 1 MB every time. The start is fixed, it is the end that moves as the code grows." },
+    { text: "So paging knows which pages to map", why: "Paging in these lessons identity maps a fixed 4 MB regardless. kernel_end is used by the PMM to protect frames, not by paging." }
+  ]
+});
+
+Guide.quiz("q-ebx", {
+  question: "If boot.s called kernel_main without pushing ebx first, what would break?",
+  options: [
+    { text: "The PMM would read a garbage address as the memory map and find no usable RAM", correct: true, why: "Correct. kernel_main's parameter would be whatever happened to be on the stack. Casting that to a MultibootInfo and reading mmap_length gives nonsense, so the PMM would either find nothing or walk off into random memory." },
+    { text: "The kernel would not compile", why: "It would compile fine. The mismatch is at runtime between what assembly pushes and what C++ expects to find, and nothing checks that." },
+    { text: "The stack would overflow immediately", why: "One missing push does not overflow anything. The stack would just hold different data than expected." },
+    { text: "GRUB would refuse to boot the kernel", why: "GRUB has already finished its work by then. It only checks the multiboot header, not what you do with the pointer it leaves behind." }
+  ]
+});
+</script>
+</body>
+</html>

@@ -1,0 +1,541 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>Paging, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Managing memory</div>
+      <h1>Paging</h1>
+      <p class="lede">A translation layer between the addresses your code uses and the physical memory they land on. It is the hardest thing in the lessons, and the failure mode is a silent reboot with no message at all.</p>
+
+      <h2>Two kinds of address</h2>
+      <p>
+        Up to this lesson there was only one kind. When the VGA driver wrote to <code>0xB8000</code>, that
+        was a physical location on the memory bus. Paging inserts a step in between.
+      </p>
+
+      <div id="m-two"></div>
+
+      <p>
+        Every memory access your code makes now goes through a lookup. The CPU takes the virtual address,
+        consults tables you built, and produces a physical address. Your code never sees the physical one.
+      </p>
+
+      <div class="box info">
+        <span class="t">Why bother</span>
+        Three reasons. Two programs can both use address 0x400000 and get different physical memory, so
+        they cannot interfere. An address with no mapping faults instead of silently corrupting something.
+        And memory can appear contiguous to a program while being scattered physically. The lessons only
+        need the second one right now, but the first is what makes user programs possible later.
+      </div>
+
+      <h2>How one address gets translated</h2>
+      <p>
+        A 32 bit virtual address is not treated as a single number. The CPU splits it into three fields and
+        uses each one for a different step.
+      </p>
+
+      <div id="m-split"></div>
+
+      <p>
+        Ten bits index a table of 1024 entries, which is why the split is 10, 10 and 12. The bottom twelve
+        bits are the offset inside a 4096 byte page, and 4096 is exactly what twelve bits can address.
+      </p>
+
+      <div id="m-addrcalc"></div>
+
+      <div id="q-split"></div>
+
+      <h2>Two levels of table</h2>
+      <p>
+        The lookup goes through two tables, not one. That seems like extra work, and it is, but it saves an
+        enormous amount of memory.
+      </p>
+
+      <div id="s-translate"></div>
+
+      <p>
+        A single level table would need one entry per page across the whole 4 GB space, which is 1048576
+        entries at 4 bytes each, so 4 MB of tables for every address space whether or not the memory is
+        used. Two levels means you only create the second level tables you actually need.
+      </p>
+
+      <div id="m-saving"></div>
+
+      <p>
+        The lessons create exactly one page table, covering the first 4 MB, and leave the other 1023
+        directory entries empty. That costs 8 KB instead of 4 MB.
+      </p>
+
+      <h2>What an entry looks like</h2>
+      <p>
+        Each entry is 32 bits holding both an address and a set of flags, which sounds impossible until you
+        remember the alignment trick from the <a href="flags.html">flags page</a>.
+      </p>
+
+      <div id="m-entry"></div>
+
+      <p>
+        Because every page is 4096 byte aligned, the low twelve bits of a page address are always zero.
+        They carry no information, so the designers reused them for flags. The address occupies the top
+        twenty bits and the flags fit underneath with no conflict.
+      </p>
+
+      <div id="m-flags"></div>
+
+      <p>
+        The lessons use <code>0x3</code>, which is present plus writable. That is the minimum for a page
+        the kernel can read and write.
+      </p>
+
+      <div id="w-defines"></div>
+
+      <div id="q-entry"></div>
+
+      <h2>Identity mapping, and why it is not optional</h2>
+      <p>
+        Here is the part that causes the silent reboots. The instant paging turns on, every address is
+        translated, including the address of the instruction the CPU is about to execute next.
+      </p>
+
+      <div id="s-identity"></div>
+
+      <p>
+        Identity mapping means virtual address X maps to physical address X. Translation happens but
+        changes nothing. That gives you a safe starting point: the kernel keeps running at the addresses it
+        was linked for, and paging is active and ready to do something more interesting later.
+      </p>
+
+      <div id="w-identity"></div>
+
+      <p>
+        The loop is doing something worth reading slowly. Entry <code>i</code> is set to point at physical
+        frame <code>i</code>, so entry 0 covers bytes 0 to 4095, entry 1 covers 4096 to 8191, and so on.
+        1024 entries at 4 KB each is exactly 4 MB.
+      </p>
+
+      <div id="q-identity"></div>
+
+      <h2>The triple fault</h2>
+      <p>
+        If the mapping is wrong when paging switches on, the machine resets. Understanding the chain is
+        useful because the same escalation causes other mysterious reboots.
+      </p>
+
+      <div id="s-triple"></div>
+
+      <div class="box warn">
+        <span class="t">Why debugging this is so unpleasant</span>
+        There is no error message, no register dump and nothing on screen. The machine simply restarts, and
+        it restarts before any print statement you added could run. The lessons verified this by running
+        QEMU with CPU reset logging and counting resets, because that was the only way to see anything at
+        all.
+      </div>
+
+      <h2>Turning it on</h2>
+      <p>
+        Two control registers, and both must be written in assembly because C++ has no way to name them.
+      </p>
+
+      <div id="m-cr"></div>
+
+      <div id="w-enable"></div>
+
+      <p>
+        The order is fixed. <code>cr3</code> must hold a valid directory before the enable bit is set,
+        because the instruction immediately after the write to <code>cr0</code> will already be translated.
+      </p>
+
+      <div id="q-order"></div>
+
+      <h2>Where the tables themselves live</h2>
+      <p>
+        The page directory and page table have to live somewhere in physical memory, and they have to be
+        4 KB aligned because the entry format only stores the top twenty bits of their address.
+      </p>
+
+      <div id="w-alloc"></div>
+
+      <p>
+        This is why paging depends on the PMM existing first. <code>alloc_frame</code> returns a 4 KB
+        aligned physical address by construction, since frames are aligned by definition. Using
+        <code>malloc</code> would give an address with arbitrary low bits, which the entry format cannot
+        represent.
+      </p>
+
+      <div id="q-align"></div>
+
+      <h2>What happens on an unmapped access</h2>
+      <p>
+        The 1023 empty directory entries are not a gap, they are a trap. Touching an address they cover
+        raises a page fault, which is exception 14 and already handled by the interrupt table.
+      </p>
+
+      <div id="m-fault"></div>
+
+      <p>
+        So the lessons get memory protection for free. Any access above 4 MB reports itself by name instead
+        of silently reading garbage, which is a genuine improvement over the situation before paging.
+      </p>
+
+      <h2>What paging unlocks later</h2>
+      <p>
+        The lessons stop at identity mapping, which is the minimum that works. Everything paging is
+        actually famous for builds on this foundation.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Capability</th><th>What it needs</th></tr></thead>
+        <tbody>
+          <tr><td>a heap larger than the identity mapped region</td><td>map new frames into the address space on demand, instead of a fixed static buffer</td></tr>
+          <tr><td>user programs that cannot touch the kernel</td><td>the user bit in each entry, plus a separate directory per process</td></tr>
+          <tr><td>two programs both using the same address</td><td>swap <code>cr3</code> on a context switch so each sees its own mappings</td></tr>
+          <tr><td>read only code pages</td><td>clear the writable bit, so a stray write faults rather than corrupting instructions</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        None of that is possible without paging on, which is why a lesson with no visible output is one of
+        the most important in the project.
+      </p>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("paging");
+
+Guide.memMap("m-two", {
+  title: "Before and after paging, click each",
+  segments: [
+    { label: "before, one address space", weight: 1, addr: "physical only", desc: "Every address your code used went straight to the memory bus. Writing to 0xB8000 reached the video hardware directly. Nothing checked anything, and a wrong address quietly corrupted whatever lived there." },
+    { label: "after, two address spaces", weight: 1, addr: "virtual, then physical", desc: "Your code uses virtual addresses. The CPU looks each one up in tables you built and produces a physical address. An address with no mapping raises a fault instead of reaching memory at all." }
+  ],
+  hint: "The lessons map virtual to the same physical address, so nothing appears to change. The machinery is what matters."
+});
+
+Guide.memMap("m-split", {
+  title: "One virtual address, three fields, click each",
+  segments: [
+    { label: "bits 31 to 22", weight: 2, addr: "directory index, 10 bits", desc: "Which of the 1024 page directory entries to use. Each directory entry covers 4 MB of address space, so this field alone narrows the address down to a 4 MB window." },
+    { label: "bits 21 to 12", weight: 2, addr: "table index, 10 bits", desc: "Which of the 1024 entries inside that page table to use. Each table entry covers one 4 KB page, so this narrows it to a single page." },
+    { label: "bits 11 to 0", weight: 2, addr: "offset, 12 bits", desc: "Which byte inside the 4 KB page. Twelve bits addresses exactly 4096 values, which is why the page size is what it is. This field is not translated at all, it passes straight through." }
+  ],
+  hint: "Ten bits indexes 1024 entries, which is why the split is 10, 10 and 12 rather than any other combination."
+});
+
+Guide.packBuilder("m-addrcalc", {
+  title: "Split a virtual address yourself",
+  intro: "Type an address in hex and see which directory entry, table entry and offset it resolves to. Try 0xB8000, the VGA buffer.",
+  label: "virtual address:",
+  value: "0xB8000",
+  srcBits: 32,
+  parts: [
+    { label: "directory index", expr: "addr >> 22", calc: function (v) { return (v >>> 22) & 0xFF; } },
+    { label: "table index, low byte", expr: "(addr >> 12) & 0x3FF", calc: function (v) { return ((v >>> 12) & 0x3FF) & 0xFF; } },
+    { label: "table index, high bits", expr: "((addr >> 12) & 0x3FF) >> 8", calc: function (v) { return (((v >>> 12) & 0x3FF) >>> 8) & 0xFF; } },
+    { label: "offset, low byte", expr: "addr & 0xFFF", calc: function (v) { return (v & 0xFFF) & 0xFF; } }
+  ],
+  hint: "0xB8000 gives directory 0, table entry 184, offset 0. Directory 0 is the only one the lessons fill in, which is why the VGA buffer still works after paging turns on."
+});
+
+Guide.stepper("s-translate", {
+  title: "Translating 0xB8000, one step at a time",
+  steps: [
+    {
+      head: "The code writes to 0xB8000",
+      text: "The VGA driver stores a character cell. As far as the C++ is concerned this is an ordinary pointer write, and nothing in the source changed when paging was added.",
+      code: "VGA_MEMORY[0] = make_entry('A', text_color);",
+      state: { "virtual address": "0x000B8000" }
+    },
+    {
+      head: "The CPU splits the address",
+      text: "Top ten bits give the directory index, middle ten give the table index, bottom twelve are the offset inside the page.",
+      code: "0x000B8000 = 0000000000 0010111000 000000000000\n             dir=0      table=184   offset=0",
+      state: { "directory index": "0", "table index": "184", "offset": "0" }
+    },
+    {
+      head: "Look up directory entry 0",
+      text: "The CPU reads cr3 to find the directory, then reads entry 0. That entry holds the physical address of a page table, plus its flags.",
+      code: "page_directory[0] = ((uint32_t)first_table) | 0x3;",
+      state: { "entry 0 present bit": "1", "points to": "our first page table" }
+    },
+    {
+      head: "If the present bit were clear, stop here",
+      text: "A clear present bit means no mapping exists, and the CPU raises a page fault immediately without reading any further. That is what the other 1023 entries do.",
+      state: { "present bit": "1, so continue" }
+    },
+    {
+      head: "Look up table entry 184",
+      text: "Inside that page table, entry 184 holds the physical frame this page maps to. The lessons set every entry to point at the matching frame number.",
+      code: "first_table[184] = (184 * 0x1000) | 0x3;\n//                 = 0xB8000 | 0x3",
+      state: { "frame address": "0x000B8000" }
+    },
+    {
+      head: "Add the offset back on",
+      text: "The frame address gives the start of the physical page. The twelve bit offset, untouched by translation, picks the byte inside it.",
+      code: "physical = 0x000B8000 + 0 = 0x000B8000",
+      state: { "physical address": "0x000B8000" }
+    },
+    {
+      head: "Identical to the virtual address",
+      text: "That is identity mapping working. Two table lookups happened and produced the same number we started with, so the VGA write reaches the video hardware exactly as before.",
+      state: { "virtual": "0x000B8000", "physical": "0x000B8000" }
+    }
+  ],
+  hint: "Every memory access does this. The CPU caches recent translations so it is not two extra reads every time."
+});
+
+Guide.memMap("m-saving", {
+  title: "Why two levels instead of one, click each",
+  segments: [
+    { label: "one level", weight: 2, addr: "4 MB of tables, always", desc: "A single table with one entry per page needs 1048576 entries to cover 4 GB. At 4 bytes each that is 4 MB of tables, allocated up front, whether the memory is used or not. Every address space would pay that cost." },
+    { label: "two levels", weight: 2, addr: "8 KB for what we use", desc: "One directory of 1024 entries, 4 KB, plus one page table for the 4 MB we actually map, another 4 KB. The other 1023 directory entries are just zeros, costing nothing and covering nothing." },
+    { label: "the trade", weight: 1, addr: "one extra lookup", desc: "Translation reads two tables instead of one. The CPU caches recent results in a translation buffer, so in practice the extra read almost never happens." }
+  ],
+  hint: "8 KB versus 4 MB. The saving is why every real CPU uses multiple levels, and 64 bit CPUs use four."
+});
+
+Guide.memMap("m-entry", {
+  title: "One 32 bit entry, click each part",
+  segments: [
+    { label: "bits 31 to 12", weight: 3, addr: "the physical address", desc: "The top twenty bits of the frame this entry points to. Only twenty bits are needed because the bottom twelve of a 4 KB aligned address are always zero. The CPU adds them back as zeros when it uses the value." },
+    { label: "bits 11 to 0", weight: 2, addr: "the flags", desc: "Twelve bits of settings occupying the space the address does not need. Present, writable, user accessible, and several the lessons do not use such as accessed and dirty which the CPU maintains itself." }
+  ],
+  hint: "This is the alignment trick from the flags page. Bits that are always zero get reused rather than wasted."
+});
+
+Guide.bitfield("m-flags", {
+  title: "Entry flags, build the 0x3 the lessons use",
+  intro: "Click the legend rows. The lessons set only the bottom two bits, which is the minimum for a usable kernel page.",
+  width: 8,
+  value: 0,
+  fields: [
+    { bit: 0, name: "present", desc: "0x1, this entry is valid. Clear means no mapping, and touching the address raises a page fault" },
+    { bit: 1, name: "writable", desc: "0x2, writes are allowed. Clear makes the page read only, so a stray write faults" },
+    { bit: 2, name: "user accessible", desc: "0x4, ring 3 code may use this page. Clear means kernel only. The lessons leave it clear, which is what protects the kernel once user programs exist" },
+    { bit: 3, name: "write through", desc: "0x8, a caching policy hint. Not used here" },
+    { bit: 4, name: "cache disabled", desc: "0x10, turns off caching for this page. Needed for memory mapped device registers, not for ordinary RAM" },
+    { bit: 5, name: "accessed", desc: "0x20, the CPU sets this when the page is read. We never write it, only read it if we wanted to track usage" },
+    { bit: 6, name: "dirty", desc: "0x40, the CPU sets this when the page is written. Used by real systems to know which pages need saving to disc" }
+  ],
+  match: {
+    "3": "0x3, present and writable. Exactly what the lessons use for every mapped page",
+    "1": "0x1, present but read only. A write would raise a page fault",
+    "0": "0x0, not present. This is what the 1023 unused directory entries hold, and touching those addresses faults",
+    "7": "0x7, present, writable and user accessible. What a user program's page would need",
+    "2": "0x2, writable but not present. Useless, the CPU ignores everything else when present is clear"
+  }
+});
+
+Guide.codeWalk("w-defines", {
+  title: "The flag constants, from paging.cpp",
+  code: "#define PAGE_PRESENT  0x1\n#define PAGE_WRITABLE 0x2\n\n// used like this, combining an address with flags:\nfirst_table[i] = (i * 0x1000) | PAGE_PRESENT | PAGE_WRITABLE;",
+  notes: [
+    { lines: [1, 2], text: "Named constants rather than a bare 0x3 at the call site. The OR at the bottom then reads as a description of intent instead of a magic number." },
+    { lines: [5, 5], text: "The address contributes the top twenty bits and each flag contributes one low bit. They cannot collide because a 4 KB aligned address has zeros in exactly the positions the flags occupy." },
+    { lines: [5, 5], text: "i * 0x1000 is frame i's physical address, since 0x1000 is 4096. Multiplying a frame number by the frame size, the same conversion the PMM does." }
+  ]
+});
+
+Guide.stepper("s-identity", {
+  title: "Why identity mapping has to come first",
+  steps: [
+    {
+      head: "Before paging, the kernel runs at 1 MB",
+      text: "The linker placed it at 0x100000 and GRUB loaded it there. Every function address, every string literal, every pointer in the kernel assumes those addresses.",
+      state: { "kernel code at": "0x100000 upward", "paging": "off" }
+    },
+    {
+      head: "Paging translates everything, including code",
+      text: "The moment the enable bit is set, the CPU translates every address it touches. That includes the instruction pointer, which is about to fetch the next instruction.",
+      state: { "about to translate": "the address of the next instruction" }
+    },
+    {
+      head: "With no mapping, the CPU cannot find its own code",
+      text: "If the page containing the currently executing instruction has no mapping, the CPU cannot fetch what comes next. It tries to raise a fault, and the fault handler's address is also unmapped.",
+      state: { "result": "triple fault, machine resets" }
+    },
+    {
+      head: "Identity mapping makes translation a no-op",
+      text: "Map virtual X to physical X for the region the kernel occupies. Translation still happens on every access, it just produces the same number it started with.",
+      code: "first_table[i] = (i * 0x1000) | 0x3;\n// entry i points at frame i",
+      state: { "virtual 0x100000": "maps to physical 0x100000" }
+    },
+    {
+      head: "Now the switch is safe",
+      text: "The kernel keeps executing from the addresses it was linked for, and paging is on. Nothing appears to change, which is exactly the goal.",
+      state: { "paging": "on", "kernel": "still running normally" }
+    },
+    {
+      head: "Why the first 4 MB specifically",
+      text: "One page table covers 4 MB, and everything the kernel needs is below that: the kernel at 1 MB, the VGA buffer at 0xB8000, the PMM bitmap, the heap. One table is enough, so the lessons build exactly one.",
+      state: { "mapped": "0 to 4 MB", "tables needed": "1" }
+    }
+  ],
+  hint: "The ordering rule is simple. Map the memory you are running from, then enable. Never the reverse."
+});
+
+Guide.codeWalk("w-identity", {
+  title: "Building the mapping, from paging.cpp",
+  code: "void paging_init() {\n    page_directory = (uint32_t*)alloc_frame();\n\n    for (int i = 0; i < 1024; i++) {\n        page_directory[i] = 0;\n    }\n\n    uint32_t* first_table = (uint32_t*)alloc_frame();\n    for (int i = 0; i < 1024; i++) {\n        first_table[i] = (i * 0x1000) | PAGE_PRESENT | PAGE_WRITABLE;\n    }\n\n    page_directory[0] = ((uint32_t)first_table)\n                      | PAGE_PRESENT | PAGE_WRITABLE;\n\n    enable_paging((uint32_t)page_directory);\n}",
+  notes: [
+    { lines: [2, 2], text: "One frame for the directory. alloc_frame guarantees 4 KB alignment, which the entry format requires. A frame is 4096 bytes and a directory of 1024 four byte entries is exactly 4096." },
+    { lines: [4, 6], text: "Zero every entry first. Zero means the present bit is clear, so every address is unmapped until something is filled in. Skipping this would leave whatever garbage the frame held, and the CPU would follow it as if it were real." },
+    { lines: [8, 8], text: "A second frame for the one page table. Also exactly 4096 bytes for 1024 entries." },
+    { lines: [9, 10], text: "The identity map. Entry i points at frame i, so entry 0 covers bytes 0 to 4095 and entry 1023 covers the last 4 KB below 4 MB." },
+    { lines: [10, 10], text: "i * 0x1000 converts the entry index into a physical address. Because that result is always 4 KB aligned, its low twelve bits are zero and the flags slot in underneath without overlapping." },
+    { lines: [13, 14], text: "Install the table as directory entry 0, covering virtual addresses 0 to 4 MB. The other 1023 entries stay zero, so anything above 4 MB faults." },
+    { lines: [16, 16], text: "Everything is in place, so now turn it on. Moving this line above the loops would reset the machine instantly." }
+  ]
+});
+
+Guide.stepper("s-triple", {
+  title: "How a bad mapping becomes a reboot",
+  steps: [
+    {
+      head: "Paging switches on with a wrong mapping",
+      text: "Say the identity map loop was missed, so the page table is all zeros. The present bit is clear everywhere.",
+      state: { "paging": "on", "mappings": "none valid" }
+    },
+    {
+      head: "The CPU fetches the next instruction and faults",
+      text: "Translating the instruction pointer finds a directory entry with no present bit. That is a page fault, exception 14.",
+      state: { "fault 1": "14, page fault" }
+    },
+    {
+      head: "Delivering that fault needs memory too",
+      text: "The CPU must read the IDT to find the page fault handler, and push a frame onto the stack. Both of those are memory accesses, and both are now translated, and both fail.",
+      state: { "fault 2": "raised while handling fault 1" }
+    },
+    {
+      head: "Two faults in a row is a double fault",
+      text: "Exception 8. The CPU tries to deliver that instead, which requires exactly the same memory accesses that just failed.",
+      state: { "fault 2": "8, double fault" }
+    },
+    {
+      head: "A fault while handling the double fault",
+      text: "Three deep. The architecture defines no recovery from this point, because there is no way to report the problem without touching memory.",
+      state: { "fault 3": "triple fault" }
+    },
+    {
+      head: "The CPU resets the machine",
+      text: "It reboots. No message, no register dump, nothing on screen, and it happens before any print statement you added could run.",
+      state: { "result": "silent reboot" }
+    },
+    {
+      head: "How the lessons diagnosed it",
+      text: "By running QEMU with CPU reset logging and counting the resets. A healthy boot shows only the normal power on resets with all registers zero. Extra resets after the kernel starts mean a triple fault.",
+      code: "qemu-system-i386 -cdrom os.iso -display none \\\n  -no-reboot -d cpu_reset 2>reset.log",
+      state: { "healthy": "2 resets, all registers zero", "triple fault": "extra resets with real register values" }
+    }
+  ],
+  hint: "The same escalation caused the lesson 11 crash, where an unmasked timer interrupt hit an empty IDT gate."
+});
+
+Guide.memMap("m-cr", {
+  title: "The two control registers, click each",
+  segments: [
+    { label: "cr3", weight: 1, addr: "the page directory base", desc: "Holds the physical address of the page directory. The CPU reads this on every translation that is not already cached. Loading a different value here is how a real OS switches between processes, since each gets its own directory." },
+    { label: "cr0", weight: 1, addr: "CPU feature flags", desc: "A collection of mode switches. Bit 31 is the paging enable bit. Setting it turns translation on for every memory access from the very next instruction onward. Other bits in this register control protected mode and caching." }
+  ],
+  hint: "Neither can be touched from C++. Control registers have no C++ name, so this is one of the few places assembly is unavoidable."
+});
+
+Guide.codeWalk("w-enable", {
+  title: "Switching it on, from paging.cpp",
+  code: "static void enable_paging(uint32_t page_directory_phys) {\n    asm volatile (\"mov %0, %%cr3\" : : \"r\"(page_directory_phys));\n\n    uint32_t cr0;\n    asm volatile (\"mov %%cr0, %0\" : \"=r\"(cr0));\n    cr0 |= 0x80000000;\n    asm volatile (\"mov %0, %%cr0\" : : \"r\"(cr0));\n}",
+  notes: [
+    { lines: [2, 2], text: "Tell the CPU where the directory is, before enabling anything. The r constraint means any general purpose register, since cr3 can be loaded from any of them." },
+    { lines: [2, 2], text: "The double percent signs are escaping. In inline assembly a single percent marks an operand placeholder, so a literal register name needs two." },
+    { lines: [5, 5], text: "Read cr0 into a normal variable. You cannot OR directly into a control register, so it comes out, gets modified, and goes back." },
+    { lines: [6, 6], text: "Set bit 31. Written as 0x80000000 rather than 1u << 31, but the effect is identical, and this is the single bit that turns paging on." },
+    { lines: [6, 6], text: "OR rather than assignment, because cr0 holds other active settings including the protected mode bit GRUB set. Overwriting the whole register would switch those off." },
+    { lines: [7, 7], text: "Write it back, and paging is live. The very next instruction fetch goes through the tables, which is why the identity map had to be correct before this line." }
+  ]
+});
+
+Guide.codeWalk("w-alloc", {
+  title: "Why the tables come from the PMM",
+  code: "static uint32_t* page_directory = nullptr;\n\n// inside paging_init:\npage_directory = (uint32_t*)alloc_frame();\nuint32_t* first_table = (uint32_t*)alloc_frame();",
+  notes: [
+    { lines: [1, 1], text: "nullptr until paging_init runs. A file scope pointer so it survives for the life of the OS, since the CPU holds its address in cr3 permanently." },
+    { lines: [4, 5], text: "alloc_frame returns a physical address that is 4 KB aligned by construction, because frames are aligned by definition. That alignment is mandatory here." },
+    { lines: [4, 5], text: "A page directory entry stores only the top twenty bits of an address. An unaligned address has non zero low bits, which would be read as flags instead, so the CPU would follow a corrupted pointer." },
+    { lines: [4, 5], text: "This is the dependency that makes the PMM lesson come before paging. Nothing else in the OS can produce a guaranteed aligned physical frame." },
+    { lines: [4, 5], text: "Each call consumes 4 KB, which is why the mem command shows 8 KB more used after paging_init than before." }
+  ]
+});
+
+Guide.memMap("m-fault", {
+  title: "What the empty entries do, click each",
+  segments: [
+    { label: "directory entry 0", weight: 1, addr: "virtual 0 to 4 MB", desc: "Present and writable, pointing at our page table. Every address in this range translates to the identical physical address, so the kernel, the VGA buffer, the PMM bitmap and the heap all work." },
+    { label: "entries 1 to 1023", weight: 6, addr: "virtual 4 MB to 4 GB", desc: "All zeros, so the present bit is clear. Any access here raises a page fault, exception 14, which the interrupt table already handles by printing the name and halting. Free memory protection, with no extra code." }
+  ],
+  hint: "Before paging a stray pointer silently corrupted memory. Now it reports itself by name, which is a real improvement."
+});
+
+Guide.quiz("q-split", {
+  question: "Why is a virtual address split into fields of 10, 10 and 12 bits rather than some other combination?",
+  options: [
+    { text: "Twelve bits addresses exactly one 4 KB page, and ten bits indexes exactly 1024 table entries", correct: true, why: "Right, and the numbers interlock. A table of 1024 four byte entries is 4096 bytes, exactly one page, so tables are themselves page sized. Twelve bits gives 4096 offsets, exactly one page of bytes. Change any of the three and the others stop fitting." },
+    { text: "Because 32 divides evenly into those pieces", why: "They do sum to 32, but so would 8, 12 and 12. The specific sizes come from the page size and the table size." },
+    { text: "Ten bits is the widest field the CPU can index with", why: "No such limit exists. Sixty four bit paging uses nine bit fields across four levels." },
+    { text: "To leave room for the flags in the address", why: "The flags live in the table entries, not in the virtual address. All 32 bits of a virtual address are used for translation." }
+  ]
+});
+
+Guide.quiz("q-entry", {
+  question: "A page table entry holds both a physical address and flags in 32 bits. How is there room?",
+  options: [
+    { text: "Pages are 4 KB aligned, so the low twelve bits of a page address are always zero and get reused", correct: true, why: "Correct. 4096 is 2 to the 12, so any 4 KB aligned address ends in twelve zero bits. Those bits carry no information, so the designers put the flags there. The CPU knows to treat the top twenty bits as an address with twelve implied zeros." },
+    { text: "The address is compressed", why: "No compression. The low bits are genuinely absent because alignment guarantees they are zero." },
+    { text: "The flags are stored in a separate table", why: "They are in the same 32 bit entry, which is exactly what makes the alignment trick necessary." },
+    { text: "Entries are actually 64 bits on 32 bit x86", why: "They are 32 bits, which is why 1024 of them fit in one 4096 byte page." }
+  ]
+});
+
+Guide.quiz("q-identity", {
+  question: "first_table[i] = (i * 0x1000) | 0x3; runs for i from 0 to 1023. How much memory does that map?",
+  options: [
+    { text: "4 MB, because 1024 entries each cover a 4 KB page", correct: true, why: "Right. 1024 times 4096 is 4194304, exactly 4 MB. That is why one page table covers 4 MB, and why one directory entry does too. The kernel, VGA buffer, PMM bitmap and heap all fit inside it." },
+    { text: "4 KB, since 0x1000 is 4096", why: "0x1000 is the size of one page. The loop maps 1024 of them, so the total is 1024 times that." },
+    { text: "4 GB, the whole address space", why: "That would need all 1024 directory entries filled, each with its own page table. The lessons fill only entry 0." },
+    { text: "1 MB, matching where the kernel loads", why: "The kernel starts at 1 MB but the mapping covers four times that, so there is room above it for the heap and other data." }
+  ]
+});
+
+Guide.quiz("q-order", {
+  question: "What happens if you set the cr0 enable bit before loading cr3?",
+  options: [
+    { text: "Paging switches on with cr3 holding a garbage address, so translation fails immediately and the machine triple faults", correct: true, why: "Correct. The instant the enable bit is set, the very next instruction fetch is translated using whatever cr3 happens to contain. Following a garbage pointer as a page directory fails, the fault cannot be delivered, and the machine resets with no message." },
+    { text: "Nothing, since cr3 is loaded a moment later", why: "There is no grace period. The next instruction after the cr0 write is already being translated." },
+    { text: "The CPU raises a general protection fault you can catch", why: "The fault handler's address also needs translating, which also fails. That escalation is what makes it a triple fault rather than a catchable error." },
+    { text: "cr3 gets loaded automatically from the directory", why: "Nothing finds the directory for the CPU. cr3 is the only thing that tells it where to look." }
+  ]
+});
+
+Guide.quiz("q-align", {
+  question: "Why must the page directory come from alloc_frame rather than a static array or malloc?",
+  options: [
+    { text: "It must be 4 KB aligned, and only a frame is guaranteed to be", correct: true, why: "Right. An entry stores just the top twenty bits of an address, assuming the bottom twelve are zero. An unaligned address has non zero low bits which the CPU would read as flags, so it would follow a corrupted pointer. Frames are 4 KB aligned by definition, so alloc_frame gives the guarantee for free." },
+    { text: "Static arrays cannot be used before main runs", why: "They can, and .bss is zeroed by then. The problem is alignment, not availability." },
+    { text: "malloc did not exist yet at that point in the lessons", why: "True, the heap comes a lesson later, but even with malloc available it would be wrong because it makes no alignment promise." },
+    { text: "The CPU requires page tables to be in low memory", why: "No such restriction. They can be anywhere in physical memory as long as they are aligned." }
+  ]
+});
+</script>
+</body>
+</html>

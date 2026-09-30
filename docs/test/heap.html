@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>The heap, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Managing memory</div>
+      <h1>The heap</h1>
+      <p class="lede">Writing your own malloc and free. The PMM hands out 4 KB frames, which is hopeless when you want twelve bytes, so this layer cuts them down to whatever size was actually asked for.</p>
+
+      <h2>The problem with fixed buffers</h2>
+      <p>
+        Every buffer in the OS up to this point had its size decided when the code was compiled. The
+        keyboard line buffer is 128 bytes, the shell command buffer is 128 bytes, the receive frame buffer
+        is 1600 bytes. All chosen in advance.
+      </p>
+      <p>
+        That works until you need something whose size you only learn while running. A webpage might be
+        8 KB one time and 40 KB the next, and no single fixed number is right.
+      </p>
+
+      <div id="m-why"></div>
+
+      <p>
+        The PMM already hands out memory, so why not use it directly? Because its unit is far too coarse.
+        Asking for twelve bytes and receiving 4096 wastes 4084 of them, and doing that repeatedly exhausts
+        memory almost immediately.
+      </p>
+
+      <div class="box info">
+        <span class="t">The lumber yard analogy</span>
+        The PMM is a yard that only sells full pallets. The heap is the shop that buys a pallet and cuts you
+        the exact plank you asked for. Same wood, very different granularity.
+      </div>
+
+      <h2>Where the memory comes from</h2>
+      <p>
+        The lessons take the simplest option available: one large static array, reserved at compile time.
+      </p>
+
+      <div id="w-region"></div>
+
+      <p>
+        Because it is uninitialised it lands in <code>.bss</code>, so it costs a megabyte of address space
+        and essentially nothing in the ISO. The same trick the PMM bitmap uses, explained on the
+        <a href="boot.html">boot page</a>.
+      </p>
+
+      <div id="q-1mb"></div>
+
+      <h2>The block header</h2>
+      <p>
+        The interesting design decision. Rather than keeping a separate table of allocations, each block
+        carries its own bookkeeping in the bytes immediately before the usable space.
+      </p>
+
+      <div id="m-layout"></div>
+
+      <p>
+        So the heap is a chain: header, bytes, header, bytes, header, bytes, running the length of the
+        region. Following the <code>next</code> pointers walks the whole thing.
+      </p>
+
+      <div id="w-header"></div>
+
+      <div id="m-headersize"></div>
+
+      <h2>How a pointer becomes a header</h2>
+      <p>
+        This is the trick that makes the whole design work. <code>free</code> receives only a pointer and
+        has to find the block's bookkeeping. Because the header sits at a fixed distance, that is one
+        subtraction.
+      </p>
+
+      <div id="s-pointer"></div>
+
+      <p>
+        No lookup table, no search, no registry of allocations. The header is always exactly
+        <code>sizeof(BlockHeader)</code> bytes before the pointer you handed out, so arithmetic finds it
+        instantly.
+      </p>
+
+      <div id="q-back"></div>
+
+      <h2>Setting up</h2>
+      <p>
+        Initialisation lays a single free block over the entire region. One header at the very start, and
+        everything after it is usable.
+      </p>
+
+      <div id="w-init"></div>
+
+      <p>
+        The usable size is the region minus one header, because those first twelve bytes are the header
+        itself and cannot also be handed out.
+      </p>
+
+      <h2>First fit allocation</h2>
+      <p>
+        Finding a block is a walk down the chain, taking the first one that is free and large enough. Not
+        the best fit, not the smallest adequate one, just the first.
+      </p>
+
+      <div id="s-malloc"></div>
+
+      <div id="w-malloc"></div>
+
+      <div id="q-split"></div>
+
+      <h2>The split guard</h2>
+      <p>
+        The condition deciding whether to split is worth its own look, because the plus one prevents a real
+        problem.
+      </p>
+
+      <div id="m-guard"></div>
+
+      <p>
+        Without room for a header plus at least one usable byte, splitting would create a block that can
+        never hold anything, or worse, compute a negative size that wraps to an enormous number because the
+        type is unsigned.
+      </p>
+
+      <div class="box warn">
+        <span class="t">Unsigned subtraction bites hard</span>
+        <code>size_t</code> is unsigned, so <code>10 - 12</code> is not negative two, it is roughly four
+        billion. A block claiming that size would be handed out on the next allocation and the caller would
+        write far past the end of the heap. The guard is what stops that arithmetic ever happening.
+      </div>
+
+      <h2>Freeing and merging</h2>
+      <p>
+        Freeing is marking a flag, plus one attempt to merge with the block after it. Merging matters more
+        than it looks.
+      </p>
+
+      <div id="s-free"></div>
+
+      <p>
+        Without merging, the heap gradually fills with small free blocks that are individually too small to
+        be useful. That is fragmentation, and it means an allocation can fail even when the total free space
+        is plenty.
+      </p>
+
+      <div id="w-free"></div>
+
+      <div id="q-order"></div>
+
+      <h2>Forward only, and what that costs</h2>
+      <p>
+        The merge looks at the next block but never the previous one. That is a deliberate simplification
+        with a visible consequence.
+      </p>
+
+      <div id="m-forward"></div>
+
+      <p>
+        Merging backwards would need either a previous pointer in every header, making each one larger, or
+        a full walk from the start to find the preceding block. The lessons took neither, accepting some
+        leftover fragmentation instead.
+      </p>
+
+      <h2>Watching it happen</h2>
+      <p>
+        The <code>heaptest</code> command runs two allocations and two frees, printing usage at each step.
+        Every number has an explanation.
+      </p>
+
+      <div id="t-heaptest"></div>
+
+      <div id="s-numbers"></div>
+
+      <p>
+        That final 24 rather than 12 is the forward only merge showing itself. It is not a bug, it is the
+        documented consequence of the simplification, and seeing it in the output is a good sanity check
+        that the merge logic works the way it was described.
+      </p>
+
+      <div id="q-24"></div>
+
+      <h2>What a production allocator adds</h2>
+      <p>
+        The lessons' heap is correct and small. Real allocators differ in ways worth knowing about.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Missing</th><th>Why it matters</th></tr></thead>
+        <tbody>
+          <tr><td>growing on demand</td><td>the region is a fixed 1 MB. A real heap asks the PMM for more frames and maps them in with paging, which is why paging comes first</td></tr>
+          <tr><td>backward merging</td><td>leftover headers accumulate, slowly fragmenting the heap over many allocate and free cycles</td></tr>
+          <tr><td>alignment guarantees</td><td>returned pointers are not aligned to any particular boundary, which some types and some hardware require</td></tr>
+          <tr><td>size classes or buckets</td><td>first fit walks the whole chain. Real allocators keep separate lists per size range so allocation is closer to constant time</td></tr>
+          <tr><td>double free detection</td><td>freeing the same pointer twice corrupts the chain silently, with the damage appearing much later somewhere unrelated</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        None of those are needed to make the networking code work, which is what the heap was built for.
+        Knowing they are absent is what stops them becoming mysterious bugs later.
+      </p>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("heap");
+
+Guide.memMap("m-why", {
+  title: "Three ways to get memory, click each",
+  segments: [
+    { label: "fixed buffers", weight: 1, addr: "decided at compile time", desc: "A declared array with a size in the source. Simple and fast, but the size is a guess made before the program runs. Too small and it overflows, too large and it wastes memory permanently." },
+    { label: "the PMM", weight: 1, addr: "whole 4 KB frames", desc: "Real allocation, but the smallest unit is 4096 bytes. Asking for twelve bytes wastes 4084. Fine for page tables, which want exactly one frame, and hopeless for small requests." },
+    { label: "the heap", weight: 1, addr: "any size, at runtime", desc: "Ask for twelve bytes and get twelve bytes, or ask for 40000 and get that. The size is decided while running, and freeing returns the space for reuse. This is what malloc and free mean." }
+  ],
+  hint: "The heap does not replace the other two, it sits on top and provides the granularity they lack."
+});
+
+Guide.codeWalk("w-region", {
+  title: "Reserving the region, from heap.cpp",
+  code: "#define HEAP_SIZE (1024 * 1024)   // 1 MB\n\nstatic uint8_t heap_area[HEAP_SIZE];",
+  notes: [
+    { lines: [1, 1], text: "One megabyte, written as a multiplication so the intent is obvious. A bare 1048576 would be harder to read at a glance." },
+    { lines: [3, 3], text: "A plain static array. uint8_t because the heap deals in raw bytes and does not care what they eventually hold." },
+    { lines: [3, 3], text: "Uninitialised, so it goes in .bss. That means a megabyte of address space but almost no bytes in the ISO, since the loader just zeroes the section." },
+    { lines: [3, 3], text: "static keeps it private to this file. Nothing outside heap.cpp can reach in and corrupt the region directly." }
+  ]
+});
+
+Guide.memMap("m-layout", {
+  title: "One block in the heap, click each part",
+  segments: [
+    { label: "the header", weight: 1, addr: "12 bytes", desc: "size, the free flag, and a pointer to the next block. Stored inline, immediately before the usable bytes. The caller never sees this and does not know it exists." },
+    { label: "the usable bytes", weight: 3, addr: "however many were requested", desc: "What malloc actually returns a pointer to. The caller writes whatever it likes here. Its size is recorded in the header sitting just above it." },
+    { label: "the next header", weight: 1, addr: "immediately after", desc: "The following block starts right where this one's usable space ends. Blocks are packed with no gaps, which is why the chain covers the whole region." }
+  ],
+  hint: "Header, bytes, header, bytes, running the length of the 1 MB region. Following the next pointers walks all of it."
+});
+
+Guide.codeWalk("w-header", {
+  title: "The header struct, from heap.cpp",
+  code: "struct BlockHeader {\n    size_t size;         // usable bytes, NOT counting this header\n    bool   free;         // true means available\n    BlockHeader* next;   // the next block's header, or nullptr\n};\n\nstatic BlockHeader* head = nullptr;",
+  notes: [
+    { lines: [2, 2], text: "The usable size only. Excluding the header means malloc can compare this directly against what the caller asked for, with no adjustment." },
+    { lines: [2, 2], text: "size_t rather than uint32_t. It widens automatically on a 64 bit build, which is the cheap bit of future proofing mentioned in the lesson." },
+    { lines: [3, 3], text: "A single bool for the state. One byte of information, though the compiler pads it so the pointer after it stays aligned." },
+    { lines: [4, 4], text: "A pointer to the next header, forming a singly linked list. There is no previous pointer, which is exactly why merging only works forwards." },
+    { lines: [5, 5], text: "No packed attribute, unlike the GDT and IDT structs. Nothing outside our own code reads this layout, so the compiler is free to arrange it however it likes." },
+    { lines: [7, 7], text: "The first block in the chain. nullptr until heap_init runs, and every walk of the heap starts here." }
+  ]
+});
+
+Guide.packBuilder("m-headersize", {
+  title: "Why the header is 12 bytes, not 9",
+  intro: "Type a requested size and see what the block actually consumes once the header is counted.",
+  label: "bytes requested:",
+  value: "100",
+  srcBits: 32,
+  parts: [
+    { label: "you asked for", expr: "size", calc: function (v) { return v & 0xFF; } },
+    { label: "header overhead", expr: "sizeof(BlockHeader)", calc: function () { return 12; } },
+    { label: "total consumed, low byte", expr: "size + 12", calc: function (v) { return (v + 12) & 0xFF; } },
+    { label: "with a split header too", expr: "size + 24", calc: function (v) { return (v + 24) & 0xFF; } }
+  ],
+  hint: "size_t is 4 bytes, bool is 1, and the pointer is 4, which totals 9. The compiler pads it to 12 so the pointer stays on a 4 byte boundary. Try 8 to see how large the overhead looks on a small request."
+});
+
+Guide.stepper("s-pointer", {
+  title: "Finding the header from a pointer",
+  steps: [
+    {
+      head: "malloc returns a pointer past the header",
+      text: "The block starts with twelve bytes of bookkeeping, so the address handed to the caller is twelve bytes further in.",
+      code: "return (void*)((uint8_t*)current + sizeof(BlockHeader));",
+      state: { "block starts at": "0x5000", "caller receives": "0x500C" }
+    },
+    {
+      head: "The caller has no idea",
+      text: "As far as the calling code is concerned it received a pointer to some memory. It never learns that twelve bytes of metadata sit just below it.",
+      state: { "caller sees": "0x500C, a normal pointer" }
+    },
+    {
+      head: "Later, free gets only that pointer",
+      text: "No size, no block identifier, just the address. It has to work out which block this belongs to from that alone.",
+      code: "void free(void* ptr) {",
+      state: { "known": "0x500C", "needed": "the header at 0x5000" }
+    },
+    {
+      head: "Subtract the header size",
+      text: "The header is always exactly twelve bytes before the pointer, so stepping back that far lands on it precisely.",
+      code: "BlockHeader* block =\n    (BlockHeader*)((uint8_t*)ptr - sizeof(BlockHeader));",
+      state: { "block": "0x5000, found" }
+    },
+    {
+      head: "Why the cast to uint8_t first",
+      text: "Pointer arithmetic scales by the pointed to type. Subtracting twelve from a uint8_t pointer moves twelve bytes, which is what we want. Doing it on a BlockHeader pointer would move twelve headers, 144 bytes, landing somewhere wrong entirely.",
+      state: { "uint8_t* minus 12": "12 bytes back, correct", "BlockHeader* minus 12": "144 bytes back, wrong" }
+    }
+  ],
+  hint: "One subtraction replaces what would otherwise be a lookup table of every live allocation."
+});
+
+Guide.codeWalk("w-init", {
+  title: "One block over everything, from heap.cpp",
+  code: "void heap_init() {\n    head = (BlockHeader*)heap_area;\n    head->size = HEAP_SIZE - sizeof(BlockHeader);\n    head->free = true;\n    head->next = nullptr;\n}",
+  notes: [
+    { lines: [2, 2], text: "Cast the array's address to a header pointer. Nothing is copied, this just decides to treat the first twelve bytes of the region as a header." },
+    { lines: [3, 3], text: "The usable size is the whole region minus one header, because those first twelve bytes are now the header and cannot also be handed out." },
+    { lines: [4, 4], text: "Free, so the first malloc will find it. Without this the heap would appear full from the start." },
+    { lines: [5, 5], text: "No next block yet. One giant block covering everything, which malloc then splits up as requests arrive." }
+  ]
+});
+
+Guide.stepper("s-malloc", {
+  title: "Allocating 100 bytes from a fresh heap",
+  steps: [
+    {
+      head: "One free block covering everything",
+      text: "After heap_init there is a single header at the start, claiming 1048564 usable bytes, which is 1 MB minus the twelve byte header.",
+      state: { "blocks": "1", "block 1": "free, 1048564 bytes" }
+    },
+    {
+      head: "Walk the chain looking for a fit",
+      text: "Start at head and check each block: is it free, and is it big enough. The first one that passes both is taken, which is what first fit means.",
+      code: "while (current != nullptr) {\n    if (current->free && current->size >= size) {",
+      state: { "checking": "block 1", "free": "yes", "big enough": "yes" }
+    },
+    {
+      head: "It is far too big, so split it",
+      text: "Handing over a million bytes for a hundred byte request would waste the rest. Instead the block is cut in two: a hundred byte block for the caller, and a new free block holding the remainder.",
+      state: { "decision": "split" }
+    },
+    {
+      head: "Place a new header after the requested bytes",
+      text: "The leftover block's header goes immediately past the caller's space, which is the original header plus twelve plus the hundred requested bytes.",
+      code: "uint8_t* raw = (uint8_t*)current;\nBlockHeader* leftover =\n    (BlockHeader*)(raw + sizeof(BlockHeader) + size);",
+      state: { "new header at": "offset 112 from the block start" }
+    },
+    {
+      head: "Give the leftover its size",
+      text: "The remainder is the original size minus the hundred bytes given away, minus another twelve for the new header itself.",
+      code: "leftover->size = current->size - size - sizeof(BlockHeader);\nleftover->free = true;\nleftover->next = current->next;",
+      state: { "leftover": "free, 1048452 bytes" }
+    },
+    {
+      head: "Shrink the original and link them",
+      text: "The first block now claims exactly what was requested, and its next pointer points at the leftover. The chain has grown from one block to two.",
+      code: "current->size = size;\ncurrent->next = leftover;",
+      state: { "block 1": "used, 100 bytes", "block 2": "free, 1048452 bytes" }
+    },
+    {
+      head: "Return a pointer past the header",
+      text: "Mark it used and hand back the address twelve bytes in. The caller gets usable memory and never sees the bookkeeping.",
+      code: "current->free = false;\nreturn (void*)((uint8_t*)current + sizeof(BlockHeader));",
+      state: { "returned": "block start + 12", "used bytes total": "124" }
+    }
+  ],
+  hint: "124 used is 100 requested plus two headers, the original and the split's. That matches the second line of the heaptest output."
+});
+
+Guide.codeWalk("w-malloc", {
+  title: "The allocator, from heap.cpp",
+  code: "void* malloc(size_t size) {\n    BlockHeader* current = head;\n    while (current != nullptr) {\n        if (current->free && current->size >= size) {\n\n            if (current->size >= size + sizeof(BlockHeader) + 1) {\n                uint8_t* raw = (uint8_t*)current;\n                BlockHeader* leftover =\n                    (BlockHeader*)(raw + sizeof(BlockHeader) + size);\n\n                leftover->size = current->size - size - sizeof(BlockHeader);\n                leftover->free = true;\n                leftover->next = current->next;\n\n                current->size = size;\n                current->next = leftover;\n            }\n            current->free = false;\n\n            return (void*)((uint8_t*)current + sizeof(BlockHeader));\n        }\n        current = current->next;\n    }\n    return nullptr;\n}",
+  notes: [
+    { lines: [2, 3], text: "Start at the head and follow next pointers. A plain linear walk, so allocation gets slower as the chain grows." },
+    { lines: [4, 4], text: "Both conditions matter. Free alone is not enough if the block is too small, and big enough is irrelevant if somebody is using it." },
+    { lines: [6, 6], text: "The split guard. Only worth splitting if the leftover can hold a header plus at least one usable byte, otherwise you create a block that can never serve anyone." },
+    { lines: [7, 9], text: "Compute where the new header goes. Casting to uint8_t first is essential so the addition counts bytes rather than whole headers." },
+    { lines: [11, 11], text: "The leftover loses both the bytes given away and the twelve for its own new header. Forgetting that second subtraction would make the leftover overlap the block before it." },
+    { lines: [13, 13], text: "The leftover inherits whatever came after the original block, so the chain stays connected." },
+    { lines: [15, 16], text: "Shrink the original to exactly what was asked for, and link the leftover in behind it. Order matters here: reading current->next on line 13 has to happen before overwriting it on line 16." },
+    { lines: [20, 20], text: "The returned pointer skips the header. This is the contract that makes the free side work by subtraction." },
+    { lines: [24, 24], text: "nullptr means no block was large enough. The caller is expected to check, and nothing enforces that it does." }
+  ]
+});
+
+Guide.memMap("m-guard", {
+  title: "The split guard, click each case",
+  segments: [
+    { label: "plenty of room", weight: 2, addr: "size >= requested + 13", desc: "The leftover can hold a header and at least one usable byte, so splitting is worthwhile. A new free block appears and the rest of the heap stays available." },
+    { label: "not enough to split", weight: 1, addr: "leftover would be under 13 bytes", desc: "No split. The caller gets the whole block including a few extra bytes it did not ask for. Slightly wasteful, but it avoids creating a useless block." },
+    { label: "why the plus one", weight: 1, addr: "the failure it prevents", desc: "Without it, a leftover of exactly twelve bytes would be a header with zero usable space, permanently unusable. Worse, a leftover smaller than twelve would compute a negative size which wraps to about four billion because size_t is unsigned." }
+  ],
+  hint: "One extra byte in a comparison, preventing an unsigned underflow that would hand out a four billion byte block."
+});
+
+Guide.stepper("s-free", {
+  title: "Freeing and merging",
+  steps: [
+    {
+      head: "free receives a pointer",
+      text: "Just an address, with no size and no block identity. Everything else has to be derived from it.",
+      code: "void free(void* ptr) {\n    if (ptr == nullptr) return;",
+      state: { "ptr": "some address in the heap" }
+    },
+    {
+      head: "Step back to the header",
+      text: "Twelve bytes before the pointer is the header, guaranteed by how malloc computed the return value.",
+      code: "BlockHeader* block =\n    (BlockHeader*)((uint8_t*)ptr - sizeof(BlockHeader));",
+      state: { "block": "found" }
+    },
+    {
+      head: "Mark it free",
+      text: "One flag. The bytes are untouched and still contain whatever the caller wrote, they are simply available again.",
+      code: "block->free = true;",
+      state: { "block": "free", "contents": "unchanged, just reusable" }
+    },
+    {
+      head: "Check whether the next block is also free",
+      text: "If it is, two adjacent free blocks exist where one larger block would be more useful. Merging them prevents the heap fragmenting into unusable slivers.",
+      code: "if (block->next != nullptr && block->next->free) {",
+      state: { "next block": "free, so merge" }
+    },
+    {
+      head: "Absorb the next block's size",
+      text: "This block grows by the next block's usable bytes plus the twelve bytes of its header, because that header is being swallowed and becomes usable space.",
+      code: "block->size += sizeof(BlockHeader) + block->next->size;",
+      state: { "block size": "grown by next size plus 12" }
+    },
+    {
+      head: "Unlink the absorbed block",
+      text: "Point past it to whatever came after. The size arithmetic had to happen first, because once this pointer is overwritten the absorbed block is unreachable.",
+      code: "block->next = block->next->next;",
+      state: { "chain": "one block shorter" }
+    }
+  ],
+  hint: "Two adjacent free blocks become one larger free block. Without merging the heap slowly fills with pieces too small to use."
+});
+
+Guide.codeWalk("w-free", {
+  title: "The free side, from heap.cpp",
+  code: "void free(void* ptr) {\n    if (ptr == nullptr) return;\n\n    BlockHeader* block =\n        (BlockHeader*)((uint8_t*)ptr - sizeof(BlockHeader));\n    block->free = true;\n\n    if (block->next != nullptr && block->next->free) {\n        block->size += sizeof(BlockHeader) + block->next->size;\n        block->next = block->next->next;\n    }\n}",
+  notes: [
+    { lines: [2, 2], text: "Freeing nullptr is a harmless no-op, matching what the standard library does. Without this check the subtraction below would compute a wild address and corrupt memory." },
+    { lines: [4, 5], text: "The subtraction that finds the header. The uint8_t cast makes it count bytes, since pointer arithmetic on BlockHeader would step by whole headers." },
+    { lines: [6, 6], text: "The entire act of freeing. No memory is cleared and nothing is returned to the PMM, the block is simply marked available." },
+    { lines: [8, 8], text: "Two conditions. A null next means this is the last block with nothing to merge, and a used next block cannot be absorbed." },
+    { lines: [9, 9], text: "Grow by the next block's usable size plus its header, because the header is being absorbed into usable space. Forgetting to add the header would lose twelve bytes on every merge." },
+    { lines: [10, 10], text: "Skip past the absorbed block. This must come after line 9, because reading block->next->size requires the pointer to still be intact." },
+    { lines: [10, 10], text: "Safe even when the absorbed block was last, since its next would be nullptr and this block correctly becomes the final one." }
+  ]
+});
+
+Guide.memMap("m-forward", {
+  title: "Forward only merging, click each",
+  segments: [
+    { label: "merging forward", weight: 1, addr: "what the lessons do", desc: "The header has a next pointer, so reaching the following block is a single dereference. Cheap and easy, and it handles the common case of freeing blocks in the order they were allocated." },
+    { label: "merging backward", weight: 1, addr: "what is missing", desc: "There is no previous pointer, so finding the block before this one means walking from head until you reach something whose next points here. That is a full scan on every free, or an extra pointer in every header making all of them larger." },
+    { label: "the cost", weight: 1, addr: "leftover headers", desc: "Free a block whose predecessor is already free and they stay separate. Over many allocate and free cycles those orphaned headers accumulate, slowly fragmenting the heap. Visible in the heaptest output as 24 bytes used instead of 12." }
+  ],
+  hint: "A deliberate trade. The lesson notes it as a known limitation rather than pretending the heap is complete."
+});
+
+Guide.terminal("t-heaptest", {
+  title: "heaptest, recorded from a real run",
+  text: "> heaptest\nheap total: 1048576 bytes, used: 12 bytes\nafter malloc(100), used: 124 bytes\nafter malloc(200), used: 336 bytes\nafter free(a),     used: 236 bytes\nafter free(b),     used: 24 bytes\n> ",
+  hint: "Five numbers, each one predicted exactly by the design. The stepper below works through them."
+});
+
+Guide.stepper("s-numbers", {
+  title: "Where each heaptest number comes from",
+  steps: [
+    {
+      head: "12 bytes at rest",
+      text: "One header covering the whole region. The usage figure counts every header plus the usable bytes of used blocks, and at this point there is exactly one header and nothing allocated.",
+      state: { "blocks": "1 free", "used": "12, one header" }
+    },
+    {
+      head: "124 after malloc(100)",
+      text: "The original header, 12, plus the hundred bytes now in use, plus the twelve byte header of the leftover block created by the split. 12 plus 100 plus 12 is 124.",
+      state: { "blocks": "1 used, 1 free", "used": "124" }
+    },
+    {
+      head: "336 after malloc(200)",
+      text: "The second allocation splits the leftover, adding 200 used bytes and one more header. 124 plus 200 plus 12 is 336.",
+      state: { "blocks": "2 used, 1 free", "used": "336" }
+    },
+    {
+      head: "236 after free(a)",
+      text: "The first block's hundred bytes are released, so 336 minus 100 is 236. Its twelve byte header still counts as overhead. No merge happens because the block after it, b, is still in use.",
+      state: { "blocks": "1 used, 2 free", "used": "236", "merged": "no, b is busy" }
+    },
+    {
+      head: "24 after free(b)",
+      text: "Block b is freed and the block after it is the big free tail, so those two merge into one. The chain collapses to two blocks and usage drops to two headers, 24 bytes.",
+      state: { "blocks": "2 free", "used": "24" }
+    },
+    {
+      head: "Why 24 and not 12",
+      text: "Block a is free and sits immediately before b, so ideally all three would merge into one. But merging only looks forward, and nothing revisits a. Its header lingers as a twelve byte sliver, which is exactly the documented limitation.",
+      state: { "ideal": "12, one header", "actual": "24, a's header left behind" }
+    }
+  ],
+  hint: "Every figure is predictable from the block layout. That is what makes this a useful test rather than just output."
+});
+
+Guide.quiz("q-1mb", {
+  question: "Why is the heap 1 MB rather than, say, 16 MB?",
+  options: [
+    { text: "It has to fit inside the 4 MB that paging identity maps", correct: true, why: "Right. The paging lesson maps only the first 4 MB of address space, and the kernel plus the PMM bitmap plus the heap all live inside it. A 16 MB static array would extend past the mapped region, and touching the far end would raise a page fault. Growing the heap properly means mapping new frames on demand, which the lessons deferred." },
+    { text: "1 MB is the largest array C++ allows in .bss", why: "There is no such limit. The constraint is the mapped address space, not the language." },
+    { text: "Because the PMM only has 1 MB free", why: "The PMM reports about 128 MB free. The heap does not take its region from the PMM at all, it is a static array." },
+    { text: "Larger arrays would make the ISO too big", why: "The array is in .bss so it costs essentially nothing in the ISO regardless of size." }
+  ]
+});
+
+Guide.quiz("q-back", {
+  question: "Why is the pointer cast to uint8_t* before subtracting sizeof(BlockHeader)?",
+  options: [
+    { text: "So the subtraction counts bytes. On a BlockHeader* it would step back by whole headers instead", correct: true, why: "Correct. Pointer arithmetic scales by the pointed to type. Subtracting 12 from a uint8_t pointer moves 12 bytes, which is what is wanted. On a BlockHeader pointer it would move 12 times 12 bytes, landing 144 bytes away in the middle of some other block." },
+    { text: "Because void* cannot be used in arithmetic", why: "True in standard C++, but casting to BlockHeader* would also fix that while giving the wrong answer. The reason for uint8_t specifically is the byte sized scaling." },
+    { text: "To make the pointer unsigned", why: "Pointers are neither signed nor unsigned in that sense. The cast is about the size of the type being stepped over." },
+    { text: "It prevents the compiler optimising the subtraction away", why: "Nothing would be optimised away here. The cast changes the arithmetic's stride." }
+  ]
+});
+
+Guide.quiz("q-split", {
+  question: "malloc(100) on a fresh heap reports 124 bytes used. Where does 124 come from?",
+  options: [
+    { text: "12 for the original header, 100 usable, and 12 more for the header of the leftover block", correct: true, why: "Right. The split creates a second block, and its header is new overhead. The usage count includes every header whether the block is free or used, plus the usable bytes of used blocks. 12 plus 100 plus 12 is 124." },
+    { text: "100 requested plus 24 bytes of alignment padding", why: "No alignment padding is added to allocations. The extra 24 is two headers." },
+    { text: "100 plus one 24 byte header", why: "The header is 12 bytes, not 24. There are two of them after the split." },
+    { text: "The heap rounds allocations up to the nearest 124 bytes", why: "No rounding happens. The block is exactly the 100 bytes requested, and the extra is bookkeeping." }
+  ]
+});
+
+Guide.quiz("q-order", {
+  question: "In free, why must block->size += ... come before block->next = block->next->next?",
+  options: [
+    { text: "The size calculation reads block->next->size, and overwriting next first would lose the way to reach it", correct: true, why: "Correct. Line 9 needs the absorbed block's size, which is reached through the next pointer. Once that pointer is reassigned to skip past it, the absorbed block is unreachable and its size cannot be read. Swapping the lines would grow the block by whatever the following block's size happened to be." },
+    { text: "Because assignment must always follow arithmetic in C++", why: "No such rule exists. This ordering is required by what the two lines read and write." },
+    { text: "To avoid a null pointer dereference", why: "The null check on line 8 already handled that. This is about not destroying a pointer that is still needed." },
+    { text: "The compiler would reorder them anyway", why: "The compiler must preserve the observable behaviour of dependent statements. It cannot fix a logic error like this." }
+  ]
+});
+
+Guide.quiz("q-24", {
+  question: "After freeing both blocks, heaptest shows 24 bytes used rather than 12. Why?",
+  options: [
+    { text: "Merging only looks forward, so block a's header is never absorbed into the block before it", correct: true, why: "Right. When b was freed it merged with the free tail after it, but nothing goes back to merge a into that combined block. Two headers remain, a's and the merged one, giving 24 bytes. It is the documented cost of forward only coalescing, not a bug." },
+    { text: "The heap keeps a permanent 24 byte reserve", why: "There is no reserve. The 24 is two leftover headers." },
+    { text: "free does not actually mark blocks as free", why: "It does, which is why usage dropped from 336 to 24 at all." },
+    { text: "The 12 byte header was doubled by the merge", why: "Merging removes a header rather than doubling one. The two remaining headers belong to two separate blocks." }
+  ]
+});
+</script>
+</body>
+</html>

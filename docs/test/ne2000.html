@@ -1,0 +1,586 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>The NE2000 card, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Getting online</div>
+      <h1>The NE2000 card</h1>
+      <p class="lede">The network card has its own memory that your CPU cannot address, and only sixteen registers to reach all of it. Both of those constraints shape every line of the driver.</p>
+
+      <h2>An old, simple design</h2>
+      <p>
+        The card the PCI scan found is a Realtek RTL8029, compatible with the NE2000 from the 1980s. That
+        age is genuinely helpful: it uses the port I/O the OS already has rather than memory mapped
+        registers, so no new mechanism is needed.
+      </p>
+
+      <div id="m-compare"></div>
+
+      <p>
+        The tradeoff is that everything moves through a narrow window rather than being directly
+        addressable, which is what makes the driver's shape unusual.
+      </p>
+
+      <h2>The card has its own RAM</h2>
+      <p>
+        This is the central fact to understand. The card contains 16 KB of memory that is not part of your
+        machine's address space at all. Packets live in there, not in your RAM.
+      </p>
+
+      <div id="m-cardram"></div>
+
+      <p>
+        So sending a packet means copying it from your memory into the card's memory, and receiving means
+        copying the other way. There is no shared buffer and no pointer you can dereference.
+      </p>
+
+      <div class="box info">
+        <span class="t">The warehouse analogy</span>
+        The card's RAM is a warehouse you cannot walk into. You tell the clerk which shelf to start at and
+        how many items you want, then receive them one at a time through a single service window. The
+        window is one port, and this arrangement is called remote DMA.
+      </div>
+
+      <h2>Sixteen registers, and pages</h2>
+      <p>
+        The card exposes only sixteen port offsets, which is not enough for everything it needs to expose.
+        The solution is to overlay several sets of registers at the same offsets and switch between them.
+      </p>
+
+      <div id="m-pages"></div>
+
+      <p>
+        Two bits of the command register select which page is visible. So offset 0x07 is the interrupt
+        status on page 0 and the current receive page on page 1, and which one you get depends on what you
+        last wrote to the command register.
+      </p>
+
+      <div id="w-pageswitch"></div>
+
+      <div class="box warn">
+        <span class="t">The mistake this invites</span>
+        Forgetting which page is selected means reading or writing a completely different register than
+        intended, with no error. The driver always switches back to page 0 immediately after a page 1
+        access, so the default state is predictable.
+      </div>
+
+      <h2>Remote DMA</h2>
+      <p>
+        Moving bytes between your memory and the card's is a three step protocol: say where, say how many,
+        then stream them through one port.
+      </p>
+
+      <div id="s-dma"></div>
+
+      <p>
+        The address and count are each 16 bit values split across two 8 bit registers, the low byte first
+        convention from the <a href="endian.html">byte order page</a>. The <code>0</code> and
+        <code>1</code> suffixes in the register names mean low and high.
+      </p>
+
+      <div id="m-dmaregs"></div>
+
+      <h2>The bug that scrambled the MAC</h2>
+      <p>
+        Reading the card's MAC address was the first real use of remote DMA, and it produced a wrong answer
+        in an instructive way.
+      </p>
+
+      <div id="s-bug"></div>
+
+      <div id="q-dcr"></div>
+
+      <div class="box warn">
+        <span class="t">How it was diagnosed</span>
+        The clue was that the last three bytes were correct while the first three were scrambled. Random
+        garbage would have corrupted all six. A partial, structured error pointed at an alignment or stride
+        problem rather than a wrong address, which narrowed it to the transfer width.
+      </div>
+
+      <h2>The doubled PROM</h2>
+      <p>
+        Even with the right transfer width, the MAC does not come out of the card in six consecutive bytes.
+      </p>
+
+      <div id="m-prom"></div>
+
+      <p>
+        The card duplicates each of the first sixteen bytes of its identification memory, so MAC byte
+        <code>i</code> sits at offset <code>i * 2</code>. The driver reads twelve bytes and keeps every
+        other one.
+      </p>
+
+      <div id="w-mac"></div>
+
+      <div id="q-prom"></div>
+
+      <h2>Dividing up the card's memory</h2>
+      <p>
+        The card's RAM has to hold both outgoing and incoming packets, so the driver splits it into two
+        regions measured in 256 byte pages.
+      </p>
+
+      <div id="m-layout"></div>
+
+      <p>
+        A full Ethernet frame is 1514 bytes, which spans six pages, so the transmit region needs at least
+        that much. The receive ring gets everything else.
+      </p>
+
+      <h2>The receive ring</h2>
+      <p>
+        Incoming packets go into a circular region of the card's memory. Two pointers track it, one moved by
+        the card and one by the driver.
+      </p>
+
+      <div id="m-ring"></div>
+
+      <div id="r-ring"></div>
+
+      <p>
+        The gap between the two pointers is the unread packets. When they meet, the ring is empty. If the
+        card's pointer catches up to the driver's from behind, the ring is full and packets get dropped.
+      </p>
+
+      <div id="q-ring"></div>
+
+      <h2>Every received packet has a header</h2>
+      <p>
+        The card prepends four bytes to each packet it stores, and those bytes are what make walking the
+        ring possible.
+      </p>
+
+      <div id="m-rxheader"></div>
+
+      <p>
+        The next page pointer is the important one. Packets are variable length, so the only way to find
+        where the following packet begins is to read it from the header of the current one.
+      </p>
+
+      <div id="w-receive"></div>
+
+      <div id="q-bnry"></div>
+
+      <h2>Sending a frame</h2>
+      <p>
+        Transmitting is two distinct phases: copy the frame into the card, then tell the card to send what
+        is sitting there.
+      </p>
+
+      <div id="s-send"></div>
+
+      <div id="w-send"></div>
+
+      <div id="q-rdc"></div>
+
+      <h2>Why the loopback test failed</h2>
+      <p>
+        The plan was a self contained test: put the card in internal loopback so a sent frame comes straight
+        back, proving both directions without needing another machine. It did not work, and the reason is
+        worth knowing.
+      </p>
+
+      <div id="s-loopback"></div>
+
+      <p>
+        So transmit was verified a different way, by capturing what left the card, and receive had to wait
+        for the ARP lesson where a real gateway sends a genuine reply.
+      </p>
+
+      <div id="t-net"></div>
+
+      <div class="box info">
+        <span class="t">Verifying transmit honestly</span>
+        QEMU can write every frame crossing the virtual network into a capture file. The captured bytes
+        matched the frame the OS built exactly, including the zero padding to the 60 byte minimum. That is
+        real proof the transmit path works, even though the OS itself could not observe it.
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("ne2000");
+
+Guide.memMap("m-compare", {
+  title: "Old card versus modern card, click each",
+  segments: [
+    { label: "NE2000, what we have", weight: 1, addr: "port I/O and remote DMA", desc: "Registers reached with inb and outb, the same mechanism as the keyboard and timer. Packets move through a single data port one byte at a time. No new machinery needed, but every byte costs a port operation." },
+    { label: "modern cards like the e1000", weight: 1, addr: "memory mapped registers and DMA rings", desc: "Registers appear in the memory map, accessed with volatile pointer casts. Packets are described by descriptor rings in your own RAM, and the card reads them directly with bus mastering DMA. Much faster, considerably more to set up." }
+  ],
+  hint: "The lessons ended up with the NE2000 because that is what the emulator provides, and it turned out to be the simpler lesson."
+});
+
+Guide.memMap("m-cardram", {
+  title: "Two separate memories, click each",
+  segments: [
+    { label: "your RAM", weight: 3, addr: "the machine's address space", desc: "Where the kernel, the stack, the heap and your frame buffers live. Reachable with ordinary pointers. The card cannot see any of this, and nothing here is visible to the card." },
+    { label: "the card's RAM", weight: 2, addr: "16 KB inside the chip", desc: "Where packets actually sit, both outgoing and incoming. Not in your address space at all, so no pointer reaches it. The only access is remote DMA through a single data port." }
+  ],
+  hint: "No shared buffer exists. Every packet has to be copied across the boundary in one direction or the other."
+});
+
+Guide.memMap("m-pages", {
+  title: "Register pages, click each",
+  segments: [
+    { label: "page 0", weight: 2, addr: "the default, CR bits 7-6 = 00", desc: "Everyday operation. The interrupt status register, the remote DMA address and count registers, the transmit page and count, the receive configuration, and the boundary pointer. Almost everything the driver touches." },
+    { label: "page 1", weight: 2, addr: "CR bits 7-6 = 01", desc: "Holds the card's own MAC address registers at offsets 0x01 to 0x06, and the current receive page at 0x07. Used during init to tell the card its address, and on every receive to read where the card is writing." },
+    { label: "page 2", weight: 1, addr: "CR bits 7-6 = 10", desc: "Mostly read back copies of page 0 values, useful for debugging a driver. The lessons never select it." }
+  ],
+  hint: "The same sixteen offsets mean different things per page. Offset 0x07 is interrupt status on page 0 and the current page on page 1."
+});
+
+Guide.codeWalk("w-pageswitch", {
+  title: "Switching pages safely, from ne2000.cpp",
+  code: "// during init, to write our MAC into the card:\noutb(io_base + NE_CR, CR_STOP | CR_PAGE1);\nfor (int i = 0; i < 6; i++) {\n    outb(io_base + NE_PHYS + i, mac[i]);\n}\noutb(io_base + NE_CURPAG, RX_START + 1);\n\noutb(io_base + NE_CR, CR_START | CR_PAGE0);\n\n// and during receive, to read the card's write pointer:\noutb(io_base + NE_CR, CR_PAGE1 | CR_START);\nuint8_t current = inb(io_base + NE_CURPAG);\noutb(io_base + NE_CR, CR_PAGE0 | CR_START);",
+  notes: [
+    { lines: [2, 2], text: "Select page 1 and stop the card at the same time. CR_PAGE1 is 0x40, bit 6, which is one of the two page select bits." },
+    { lines: [3, 5], text: "NE_PHYS is 0x01, and the six MAC bytes occupy offsets 0x01 to 0x06 on page 1. Without the page switch these offsets would hit PSTART, PSTOP, BNRY and the transmit registers instead." },
+    { lines: [6, 6], text: "CURPAG at offset 0x07 on page 1. On page 0 that same offset is the interrupt status register, so writing here without switching would acknowledge interrupts rather than set the receive pointer." },
+    { lines: [8, 8], text: "Back to page 0 immediately. Leaving page 1 selected would break every subsequent register access in the driver." },
+    { lines: [11, 13], text: "The receive path does the same dance for a single read. Switch, read, switch back, so page 0 is always the resting state." }
+  ]
+});
+
+Guide.stepper("s-dma", {
+  title: "Remote DMA, reading bytes out of the card",
+  steps: [
+    {
+      head: "The bytes you want are inside the card",
+      text: "Somewhere in its 16 KB of internal RAM. No pointer in your program can reach them, so they have to be streamed out.",
+      state: { "location": "card RAM", "reachable by pointer": "no" }
+    },
+    {
+      head: "Say how many bytes",
+      text: "The byte count is 16 bits, split across two registers, low byte first. Reading the MAC needs twelve bytes.",
+      code: "outb(io_base + NE_RBCR0, 12);   // count, low byte\noutb(io_base + NE_RBCR1, 0);    // count, high byte",
+      state: { "count": "12" }
+    },
+    {
+      head: "Say where to start",
+      text: "The start address inside card RAM, also 16 bits across two registers. Zero is the beginning, where the identification memory lives.",
+      code: "outb(io_base + NE_RSAR0, 0);    // address, low byte\noutb(io_base + NE_RSAR1, 0);    // address, high byte",
+      state: { "start address": "0" }
+    },
+    {
+      head: "Start the transfer",
+      text: "Writing the remote DMA read command to the command register opens the window. The card is now ready to hand bytes over.",
+      code: "outb(io_base + NE_CR, CR_RDMA_RD | CR_START);",
+      state: { "window": "open" }
+    },
+    {
+      head: "Read the data port repeatedly",
+      text: "Each read of the data port gives the next byte and advances the card's internal pointer. Twelve reads pull out twelve bytes.",
+      code: "for (int i = 0; i < 12; i++) {\n    prom[i] = inb(io_base + NE_DATA);\n}",
+      state: { "bytes transferred": "12", "data port": "one byte per read" }
+    },
+    {
+      head: "Writing works the same in reverse",
+      text: "Set the address and count, issue the write command instead, then write bytes to the data port. That is how a frame gets into the card before transmission.",
+      code: "outb(io_base + NE_CR, CR_RDMA_WR | CR_START);\nfor (uint16_t i = 0; i < length; i++) {\n    outb(io_base + NE_DATA, data[i]);\n}",
+      state: { "direction": "into the card" }
+    }
+  ],
+  hint: "One port, one byte at a time, with the card tracking position internally. Slow by modern standards and very simple to program."
+});
+
+Guide.memMap("m-dmaregs", {
+  title: "The remote DMA registers, click each",
+  segments: [
+    { label: "RSAR0, 0x08", weight: 1, addr: "start address, low byte", desc: "The bottom eight bits of the 16 bit address inside card RAM. The 0 suffix means low, a naming convention used throughout this chip." },
+    { label: "RSAR1, 0x09", weight: 1, addr: "start address, high byte", desc: "The top eight bits. Because pages are 256 bytes, writing a page number here addresses the start of that page directly, which is why the code sets RSAR1 to TX_PAGE and RSAR0 to zero." },
+    { label: "RBCR0, 0x0A", weight: 1, addr: "byte count, low byte", desc: "How many bytes to transfer, bottom eight bits. A full frame of 1514 bytes needs both registers." },
+    { label: "RBCR1, 0x0B", weight: 1, addr: "byte count, high byte", desc: "The top eight bits of the count. For the twelve byte MAC read this is zero." },
+    { label: "DATA, 0x10", weight: 2, addr: "the transfer window", desc: "Read it to pull a byte out, write it to push a byte in. The card advances its internal position automatically, so this single port streams the whole transfer." }
+  ],
+  hint: "Two 16 bit values across four 8 bit registers, plus one window port. That is the whole interface to the card's memory."
+});
+
+Guide.stepper("s-bug", {
+  title: "The MAC came out scrambled",
+  steps: [
+    {
+      head: "The expected MAC",
+      text: "QEMU gives its emulated cards a predictable address, so the correct answer was known in advance.",
+      state: { "expected": "52:54:00:12:34:56" }
+    },
+    {
+      head: "What the driver printed",
+      text: "The last three bytes were right, the first three were wrong. Not random garbage, which would have corrupted all six.",
+      state: { "got": "52:00:34:12:34:56", "correct bytes": "the last three" }
+    },
+    {
+      head: "A structured error points at stride",
+      text: "Partial corruption in a repeating pattern suggests the transfer is advancing by the wrong amount rather than reading the wrong place entirely.",
+      state: { "suspect": "transfer width, not address" }
+    },
+    {
+      head: "The data configuration register was wrong",
+      text: "DCR had been set to 0x01. Bit 0 of that register selects the transfer width, and setting it means 16 bit word mode.",
+      code: "outb(io_base + NE_DCR, 0x01);   // wrong, this is WORD mode",
+      state: { "DCR bit 0": "1, word mode" }
+    },
+    {
+      head: "But the driver reads one byte at a time",
+      text: "Each inb takes one byte while the card advances its pointer by two, because it believes it is doing 16 bit transfers. The stride and the read width disagree.",
+      state: { "driver reads": "1 byte per access", "card advances": "2 bytes per access" }
+    },
+    {
+      head: "Confirmed in the emulator's source",
+      text: "QEMU's NE2000 model picks its transfer width from that exact bit, which made the cause unambiguous rather than a guess.",
+      code: "// from QEMU hw/net/ne2000.c\nif (s->dcfg & 0x01) {\n    ret = ne2000_mem_readw(s, s->rsar);   // 16 bit\n} else {\n    ret = ne2000_mem_readb(s, s->rsar);   // 8 bit\n}",
+      state: { "cause": "confirmed, not guessed" }
+    },
+    {
+      head: "One value fixed it",
+      text: "DCR 0x48 leaves bit 0 clear, selecting byte mode, with the other bits setting a normal FIFO threshold. The MAC then read correctly.",
+      code: "outb(io_base + NE_DCR, 0x48);   // byte mode, bit 0 clear",
+      state: { "result": "52:54:00:12:34:56, correct" }
+    }
+  ],
+  hint: "A one bit mistake in a configuration register, producing a wrong answer that looked almost plausible."
+});
+
+Guide.memMap("m-prom", {
+  title: "Why the MAC needs every other byte, click each",
+  segments: [
+    { label: "what the card stores", weight: 2, addr: "each byte duplicated", desc: "The card duplicates each of the first sixteen bytes of its identification memory. So the MAC 52:54:00 is stored as 52 52 54 54 00 00, and MAC byte i ends up at offset i times 2." },
+    { label: "so the driver reads 12", weight: 1, addr: "twice as many as needed", desc: "Six MAC bytes spread across twelve offsets means asking for twelve bytes, which is why the DMA count is 12 rather than 6." },
+    { label: "and keeps the even ones", weight: 1, addr: "prom[i * 2]", desc: "Taking offsets 0, 2, 4, 6, 8 and 10 gives the six real MAC bytes. The odd offsets are duplicates and discarded." }
+  ],
+  hint: "A quirk of how the card exposes its PROM. Reading six consecutive bytes would give 52:52:54, half a MAC with everything doubled."
+});
+
+Guide.codeWalk("w-mac", {
+  title: "Reading the MAC, from ne2000.cpp",
+  code: "outb(io_base + NE_CR, CR_STOP | CR_PAGE0);\noutb(io_base + NE_DCR, 0x48);\n\noutb(io_base + NE_RBCR0, 12);\noutb(io_base + NE_RBCR1, 0);\noutb(io_base + NE_RSAR0, 0);\noutb(io_base + NE_RSAR1, 0);\noutb(io_base + NE_CR, CR_RDMA_RD | CR_START);\n\nuint8_t prom[12];\nfor (int i = 0; i < 12; i++) {\n    prom[i] = inb(io_base + NE_DATA);\n}\nfor (int i = 0; i < 6; i++) {\n    mac[i] = prom[i * 2];\n}",
+  notes: [
+    { lines: [1, 1], text: "Stop the card before touching its memory. A running card might be writing incoming packets into RAM while you read, giving inconsistent results." },
+    { lines: [2, 2], text: "Byte wide DMA. Bit 0 clear is the fix for the scrambling bug, and 0x48 also sets a sensible FIFO threshold in the upper bits." },
+    { lines: [4, 5], text: "Twelve bytes, because the PROM stores each MAC byte twice. Asking for six would give only the first three bytes, each duplicated." },
+    { lines: [6, 7], text: "Start at address zero, the beginning of card RAM where the identification memory sits." },
+    { lines: [8, 8], text: "Issue the read command. Only after this does the data port carry anything meaningful." },
+    { lines: [11, 13], text: "Twelve reads, twelve bytes. Each access advances the card's internal pointer by one, now that byte mode is set correctly." },
+    { lines: [14, 16], text: "Keep every other byte. i times 2 gives offsets 0, 2, 4, 6, 8, 10, discarding the duplicates at the odd positions." }
+  ]
+});
+
+Guide.memMap("m-layout", {
+  title: "Card RAM divided up, click each region",
+  segments: [
+    { label: "pages below 0x40", weight: 1, addr: "identification memory", desc: "Where the MAC address lives, read once at startup. Not used for packets." },
+    { label: "TX_PAGE, 0x40", weight: 2, addr: "the transmit buffer", desc: "One frame at a time waits here before being sent. A full 1514 byte frame spans six pages, so this region covers 0x40 through 0x45. The driver always writes frames to the start of it." },
+    { label: "RX_START 0x46 to RX_STOP 0x60", weight: 4, addr: "the receive ring", desc: "26 pages of circular buffer for incoming packets. The card fills them in order and wraps back to 0x46 at the end. PSTART and PSTOP tell the card these boundaries." }
+  ],
+  hint: "Pages are 256 bytes, so writing a page number into the high byte of a DMA address addresses that page directly."
+});
+
+Guide.memMap("m-ring", {
+  title: "The two ring pointers, click each",
+  segments: [
+    { label: "CURPAG, the card's pointer", weight: 1, addr: "page 1, offset 0x07", desc: "Where the card will write the next incoming packet. The card advances it as packets arrive, and the driver only ever reads it. Reading requires switching to register page 1 and back." },
+    { label: "BNRY, the driver's pointer", weight: 1, addr: "page 0, offset 0x03", desc: "The last page the driver has consumed. The driver advances it after reading a packet, which tells the card that space is free again. The card reads it to know when the ring is full." }
+  ],
+  hint: "A producer and a consumer chasing each other around a loop. The gap between them is unread packets."
+});
+
+Guide.ringViz("r-ring", {
+  title: "The receive ring, drive it yourself",
+  first: 0x46,
+  last: 0x60,
+  hint: "C marks CURPAG, where the card writes next. B marks BNRY, how far the driver has read. Add packets faster than you read them and the ring fills up."
+});
+
+Guide.memMap("m-rxheader", {
+  title: "The four byte header on each packet, click each",
+  segments: [
+    { label: "byte 0", weight: 1, addr: "receive status", desc: "Whether the packet arrived cleanly. The driver reads it but does not act on it, since a corrupt frame would be discarded at a higher layer anyway." },
+    { label: "byte 1", weight: 2, addr: "next packet's page", desc: "The most important field. Packets are variable length, so this is the only way to find where the following packet starts. It is also what the driver uses to compute the new boundary pointer." },
+    { label: "bytes 2 to 3", weight: 2, addr: "total length", desc: "The length including these four header bytes, stored low byte first. Subtracting four gives the actual packet size. Forgetting that subtraction copies four bytes too many." }
+  ],
+  hint: "Written by the card, not by the sender. It is bookkeeping the card adds so the driver can walk the ring."
+});
+
+Guide.codeWalk("w-receive", {
+  title: "Receiving one packet, from ne2000.cpp",
+  code: "outb(io_base + NE_CR, CR_PAGE1 | CR_START);\nuint8_t current = inb(io_base + NE_CURPAG);\noutb(io_base + NE_CR, CR_PAGE0 | CR_START);\n\nuint8_t boundary = inb(io_base + NE_BNRY);\nuint8_t next = boundary + 1;\nif (next >= RX_STOP) next = RX_START;\nif (next == current) return 0;\n\n// read the 4 byte header first\noutb(io_base + NE_RBCR0, 4);\noutb(io_base + NE_RSAR0, 0);\noutb(io_base + NE_RSAR1, next);\noutb(io_base + NE_CR, CR_RDMA_RD | CR_START);\n\nuint8_t status    = inb(io_base + NE_DATA);\nuint8_t next_page = inb(io_base + NE_DATA);\nuint8_t len_lo    = inb(io_base + NE_DATA);\nuint8_t len_hi    = inb(io_base + NE_DATA);\n\nuint16_t total_len = (uint16_t)len_lo | ((uint16_t)len_hi << 8);\nuint16_t data_len = total_len - 4;\n\n// then the body, skipping the header\noutb(io_base + NE_RSAR0, 4);\noutb(io_base + NE_RSAR1, next);\noutb(io_base + NE_CR, CR_RDMA_RD | CR_START);\nfor (uint16_t i = 0; i < data_len; i++) {\n    buf[i] = inb(io_base + NE_DATA);\n}\n\nuint8_t new_bnry = next_page - 1;\nif (new_bnry < RX_START) new_bnry = RX_STOP - 1;\noutb(io_base + NE_BNRY, new_bnry);",
+  notes: [
+    { lines: [1, 3], text: "Switch to page 1 to read the card's write pointer, then straight back to page 0. Leaving page 1 selected would break every register access below." },
+    { lines: [6, 7], text: "The next unread page is one past the boundary, wrapping at the top of the ring back to the start. This is what makes it circular rather than linear." },
+    { lines: [8, 8], text: "The empty check. If the next unread page is where the card is about to write, there is nothing waiting." },
+    { lines: [11, 13], text: "Setting RSAR1 to a page number addresses the start of that page, because pages are 256 bytes and RSAR1 is the high byte of the address." },
+    { lines: [16, 19], text: "Four reads for the four header bytes, in order. The card added these, they are not part of what the sender transmitted." },
+    { lines: [21, 21], text: "Reassemble the 16 bit length, low byte first. This is inside the card's own bookkeeping so it follows the hardware convention, not network byte order." },
+    { lines: [22, 22], text: "Subtract the four header bytes to get the real packet length. Skipping this would copy four bytes past the end of the packet." },
+    { lines: [25, 26], text: "A second DMA setup starting at offset 4 into the page, skipping the header we already consumed." },
+    { lines: [32, 34], text: "Advance the boundary. next_page is where the FOLLOWING packet starts, so the last page this one used is one before it. The wrap check handles dropping below the ring's start." }
+  ]
+});
+
+Guide.stepper("s-send", {
+  title: "Sending a frame, two phases",
+  steps: [
+    {
+      head: "Pad short frames to 60 bytes",
+      text: "Ethernet has a minimum frame size. A 16 byte test frame would be rejected by real hardware, so the driver pads with zeros.",
+      code: "uint16_t len = length;\nif (len < 60) len = 60;",
+      state: { "requested": "16", "actual": "60" }
+    },
+    {
+      head: "Clear the DMA complete flag",
+      text: "That status bit will be used to detect when the copy finishes, so any stale value has to be cleared first. On this chip you clear a status bit by writing a 1 to it.",
+      code: "outb(io_base + NE_ISR, ISR_RDC);",
+      state: { "RDC flag": "cleared" }
+    },
+    {
+      head: "Set up a DMA write into the transmit page",
+      text: "Address is the transmit page, count is the padded length, and the command is remote DMA write rather than read.",
+      code: "outb(io_base + NE_RBCR0, len & 0xFF);\noutb(io_base + NE_RBCR1, (len >> 8) & 0xFF);\noutb(io_base + NE_RSAR0, 0x00);\noutb(io_base + NE_RSAR1, TX_PAGE);\noutb(io_base + NE_CR, CR_RDMA_WR | CR_START);",
+      state: { "direction": "into the card", "destination": "page 0x40" }
+    },
+    {
+      head: "Push the bytes through the data port",
+      text: "One write per byte, then zeros for the padding. The frame now sits in the card's memory but nothing has been transmitted yet.",
+      code: "for (uint16_t i = 0; i < length; i++) {\n    outb(io_base + NE_DATA, data[i]);\n}\nfor (uint16_t i = length; i < len; i++) {\n    outb(io_base + NE_DATA, 0x00);\n}",
+      state: { "frame location": "card RAM page 0x40" }
+    },
+    {
+      head: "Wait for the copy to finish",
+      text: "Poll the remote DMA complete bit. Triggering the transmit before the copy finishes would send a half written frame.",
+      code: "while ((inb(io_base + NE_ISR) & ISR_RDC) == 0) { }\noutb(io_base + NE_ISR, ISR_RDC);",
+      state: { "copy": "complete" }
+    },
+    {
+      head: "Now trigger the transmit",
+      text: "Tell the card which page holds the frame and how long it is, then set the transmit bit. The card puts it on the wire.",
+      code: "outb(io_base + NE_TPSR, TX_PAGE);\noutb(io_base + NE_TBCR0, len & 0xFF);\noutb(io_base + NE_TBCR1, (len >> 8) & 0xFF);\noutb(io_base + NE_CR, CR_TRANS | CR_START);",
+      state: { "frame": "on the wire" }
+    }
+  ],
+  hint: "The length is written twice, once for the DMA copy and once for the transmit. They serve different purposes and both use the padded value."
+});
+
+Guide.codeWalk("w-send", {
+  title: "The send function, from ne2000.cpp",
+  code: "void ne2000_send(const uint8_t* data, uint16_t length) {\n    uint16_t len = length;\n    if (len < 60) len = 60;\n\n    outb(io_base + NE_ISR, ISR_RDC);\n\n    outb(io_base + NE_RBCR0, len & 0xFF);\n    outb(io_base + NE_RBCR1, (len >> 8) & 0xFF);\n    outb(io_base + NE_RSAR0, 0x00);\n    outb(io_base + NE_RSAR1, TX_PAGE);\n    outb(io_base + NE_CR, CR_RDMA_WR | CR_START);\n\n    for (uint16_t i = 0; i < length; i++) {\n        outb(io_base + NE_DATA, data[i]);\n    }\n    for (uint16_t i = length; i < len; i++) {\n        outb(io_base + NE_DATA, 0x00);\n    }\n\n    while ((inb(io_base + NE_ISR) & ISR_RDC) == 0) { }\n    outb(io_base + NE_ISR, ISR_RDC);\n\n    outb(io_base + NE_TPSR, TX_PAGE);\n    outb(io_base + NE_TBCR0, len & 0xFF);\n    outb(io_base + NE_TBCR1, (len >> 8) & 0xFF);\n    outb(io_base + NE_CR, CR_TRANS | CR_START);\n}",
+  notes: [
+    { lines: [2, 3], text: "The padded length is kept separate from the caller's length. Both are needed: one for how many real bytes to copy, the other for the total to transmit." },
+    { lines: [5, 5], text: "Clearing the status bit by writing a 1 to it. Counter intuitive, but that is how this chip's status register works." },
+    { lines: [9, 10], text: "RSAR1 holds the page number and RSAR0 zero, which addresses the very start of the transmit page. Pages being 256 bytes is what makes this work so neatly." },
+    { lines: [13, 15], text: "The caller's actual bytes, using the unpadded length so nothing beyond the real frame is read from their buffer." },
+    { lines: [16, 18], text: "Zero padding up to the minimum. Reading past the caller's buffer would be a bug, so the padding is generated rather than copied." },
+    { lines: [20, 20], text: "The wait that the lesson overview flags as a gotcha. Without it the transmit could fire while bytes are still being copied, sending a truncated frame." },
+    { lines: [23, 26], text: "The transmit trigger. TPSR says which page, TBCR says how many bytes, and the TRANS bit starts it. The emulator sends the frame the instant it sees that bit." }
+  ]
+});
+
+Guide.stepper("s-loopback", {
+  title: "Why the self test could not work",
+  steps: [
+    {
+      head: "The plan was internal loopback",
+      text: "The card has a transmit configuration bit that routes sent frames straight back to its own receiver. That would prove both directions with no second machine needed.",
+      code: "#define TCR_LOOP 0x02\nne2000_set_loopback(true);",
+      state: { "expected": "send a frame, receive it back" }
+    },
+    {
+      head: "Nothing came back",
+      text: "The frame was sent, the receive poll ran 200000 times, and the ring stayed empty throughout.",
+      state: { "frames sent": "1", "frames received": "0" }
+    },
+    {
+      head: "The emulator's source explained it",
+      text: "QEMU's NE2000 transmit path hands the frame to the network backend unconditionally. It never checks the loopback bit, so the frame always leaves and is never routed back internally.",
+      code: "// QEMU hw/net/ne2000.c, on the transmit bit\nqemu_send_packet(qemu_get_queue(s->nic),\n                 s->mem + index, s->tcnt);",
+      state: { "loopback bit": "emulated, but ignored" }
+    },
+    {
+      head: "So it was a limitation, not a bug",
+      text: "No amount of driver work would make it pass. The loopback receive was removed from the test rather than left failing in a way that looked like broken code.",
+      state: { "net command": "sends and confirms only" }
+    },
+    {
+      head: "Transmit was proven another way",
+      text: "QEMU can capture every frame crossing the virtual network. The captured bytes matched the constructed frame exactly, including the zero padding.",
+      code: "-object filter-dump,id=d0,netdev=n0,file=tx.pcap",
+      state: { "transmit": "verified from the capture" }
+    },
+    {
+      head: "Receive waited for ARP",
+      text: "The next lesson sends an ARP request to the gateway, which replies with a genuine frame. That gave receive its first real test, and it passed.",
+      state: { "receive": "verified in the ARP lesson" }
+    }
+  ],
+  hint: "Recognising an emulator limitation rather than chasing a phantom driver bug saved a great deal of time."
+});
+
+Guide.terminal("t-net", {
+  title: "The net command, recorded from a real run",
+  text: "> net\nSending a test frame from 52:54:00:12:34:56 (broadcast)...\nFrame sent.\n> ",
+  hint: "Honest output. The OS cannot observe its own frame leaving, so it reports only what it actually knows."
+});
+
+Guide.quiz("q-dcr", {
+  question: "DCR bit 0 was set, selecting 16 bit transfers, while the driver read one byte at a time. Why did that scramble the MAC?",
+  options: [
+    { text: "The card advanced its internal pointer by two bytes per access while the driver consumed only one", correct: true, why: "Right. In word mode the card assumes each access moves 16 bits, so it steps its position by two. The driver's inb takes one byte, so every read skipped a byte. The resulting stride mismatch produced a partial, patterned corruption rather than random garbage, which is exactly what was observed." },
+    { text: "Word mode reverses the byte order of every pair", why: "That would produce a different pattern, and the last three bytes came out correct which a byte swap would not explain." },
+    { text: "The card refuses byte reads in word mode and returned 0xFF", why: "The reads returned real data, just from the wrong positions. Some bytes were correct." },
+    { text: "The DMA count was interpreted as words, halving the transfer", why: "Plausible sounding, but the actual mechanism is the pointer stride on each access. The count of twelve was honoured." }
+  ]
+});
+
+Guide.quiz("q-prom", {
+  question: "Why does the driver read 12 bytes and keep only prom[i * 2]?",
+  options: [
+    { text: "The card duplicates each PROM byte, so MAC byte i sits at offset i times 2", correct: true, why: "Correct. The card's identification memory stores each of its first sixteen bytes twice, so the MAC 52:54:00:12:34:56 occupies twelve offsets as 52 52 54 54 00 00 and so on. Reading six consecutive bytes would give 52:52:54 instead, half a MAC with everything doubled." },
+    { text: "Because half the bytes are a checksum", why: "There is no checksum here. The odd offsets are exact duplicates of the even ones." },
+    { text: "To skip the padding the card adds between fields", why: "It is duplication rather than padding. Each real byte appears twice in a row." },
+    { text: "Because the MAC is stored as 12 hex characters", why: "It is stored as binary bytes, not text. Twelve is six doubled, not six pairs of characters." }
+  ]
+});
+
+Guide.quiz("q-ring", {
+  question: "The driver computes next = BNRY + 1 and compares it to CURPAG. What does next == current mean?",
+  options: [
+    { text: "The ring is empty, there is nothing new to read", correct: true, why: "Right. BNRY is the last page consumed, so BNRY plus one is the next unread page. If that is exactly where the card is about to write, the driver has caught up completely and no packet is waiting. The function returns zero." },
+    { text: "The ring is full and packets are being dropped", why: "That is the opposite condition, when the card's pointer catches up to BNRY from behind. Equality after the plus one means empty." },
+    { text: "A packet is ready at that page", why: "A packet is ready when the two differ, leaving a gap between them." },
+    { text: "The pointers have wrapped around the ring", why: "Wrapping is handled separately by the check against RX_STOP. Equality is about the gap, not the wrap." }
+  ]
+});
+
+Guide.quiz("q-bnry", {
+  question: "After reading a packet the driver sets BNRY to next_page - 1. Why subtract one?",
+  options: [
+    { text: "next_page is where the following packet starts, so the last page this packet used is one before it", correct: true, why: "Correct. BNRY means the last page consumed, and the header's next_page field points at the start of the next packet. Setting BNRY to next_page directly would claim to have consumed a page that has not been read yet, so the following packet would be skipped." },
+    { text: "Because pages are numbered from one rather than zero", why: "Pages are just addresses divided by 256, with no off by one numbering. The subtraction reflects what BNRY means." },
+    { text: "To leave a spare page as a safety gap", why: "No gap is intended. The arithmetic is about the difference between last consumed and next available." },
+    { text: "Because the card expects BNRY to lag by one page", why: "It is not a lag the card requires, it follows from BNRY meaning the last page read rather than the next unread one." }
+  ]
+});
+
+Guide.quiz("q-rdc", {
+  question: "What breaks if the driver skips the wait for the remote DMA complete bit before triggering transmit?",
+  options: [
+    { text: "The card may transmit a partially copied frame, sending garbage after the first few bytes", correct: true, why: "Right. The DMA copy and the transmit are separate operations. Setting the transmit bit while bytes are still being pushed means the card sends whatever is currently in the transmit page, which could be half the frame followed by stale data. The result goes out on the wire looking corrupt." },
+    { text: "The transmit command is ignored entirely", why: "The card would honour it, which is exactly the problem. It sends whatever is there at that moment." },
+    { text: "The driver hangs waiting for the frame to send", why: "Removing a wait cannot cause a hang. The failure is a corrupt frame going out, with no error reported." },
+    { text: "The DMA copy is cancelled by the transmit", why: "They are independent. The copy continues while the transmit reads from the same page, which is what causes the corruption." }
+  ]
+});
+</script>
+</body>
+</html>

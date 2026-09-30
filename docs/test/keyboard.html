@@ -1,0 +1,391 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>Keyboard and scancodes, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Talking to hardware</div>
+      <h1>Keyboard and scancodes</h1>
+      <p class="lede">A keyboard does not send letters. It sends a number for each physical key, twice, once when you press and once when you let go. Turning that into typed text is entirely your job.</p>
+
+      <h2>Keys, not characters</h2>
+      <p>
+        This is the thing to unlearn. The keyboard has no idea what letter is printed on a key. It
+        reports positions on a grid, and the number it sends is called a scancode.
+      </p>
+      <p>
+        Scancode 0x1E is the key one step right of caps lock. On a US layout that is A. On a French
+        AZERTY layout the same physical key is Q, and the keyboard still sends 0x1E. The layout lives
+        in software, which means the translation table in the lessons is a US layout by choice.
+      </p>
+
+      <div id="m-scan"></div>
+
+      <p>
+        Notice the codes are roughly sequential across each row of the keyboard, because they follow the
+        physical wiring rather than the alphabet. That is why the translation table in
+        <code>keyboard.cpp</code> looks scrambled when you read it as text: it is in keyboard order, not
+        alphabetical order.
+      </p>
+
+      <div id="w-table"></div>
+
+      <h2>Press and release are two separate events</h2>
+      <p>
+        Every key produces two scancodes. The press is called a make code and the release is called a
+        break code, and the relationship between them is a single bit.
+      </p>
+
+      <div id="m-break"></div>
+
+      <p>
+        Adding 0x80 sets bit 7. So the release code is the press code with the top bit turned on, which
+        means testing for a release is one mask.
+      </p>
+
+      <div id="w-release"></div>
+
+      <p>
+        The driver ignores most releases. You do not want an A to appear when the key goes down and again
+        when it comes up. But two releases do matter, and they are the shift keys.
+      </p>
+
+      <div id="q-break"></div>
+
+      <h2>Why shift has to be remembered</h2>
+      <p>
+        Shift is not a character, it is a state. The keyboard sends 0x2A when left shift goes down and
+        0xAA when it comes up, and in between it sends the scancode of whatever else you pressed. The
+        driver has to hold onto that in between state itself.
+      </p>
+
+      <div id="s-shift"></div>
+
+      <p>
+        This is why <code>shift_held</code> is a file scope variable rather than a local. It must survive
+        between interrupts, because each interrupt only sees one scancode and has no memory of the last
+        one.
+      </p>
+
+      <div class="box info">
+        <span class="t">Making a letter uppercase</span>
+        The driver subtracts 0x20 rather than using a library function. In ASCII the uppercase letters
+        sit exactly 32 below the lowercase ones, so <code>'a'</code> minus 0x20 is <code>'A'</code>. It
+        only works for letters, which is why the code checks the range first.
+      </div>
+
+      <h2>Two ways to get a keystroke</h2>
+      <p>
+        Lesson 3 read the keyboard by polling, and lesson 11 replaced that with interrupts. The
+        difference matters enough that it was worth a whole lesson.
+      </p>
+
+      <div id="m-poll"></div>
+
+      <p>
+        Polling means asking constantly, which burns the CPU doing nothing useful and still misses keys
+        if you are busy elsewhere. Interrupts invert the relationship: the hardware interrupts you when
+        something happens, so the CPU can sleep in between.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">What sleeping looks like</div>
+        <div class="st-code">while (!line_ready) {
+    asm volatile ("hlt");   // stop the CPU until an interrupt arrives
+}</div>
+        <div class="hint">hlt halts the processor. It does nothing at all until an interrupt wakes it, which for us means a keypress. Compare that to a polling loop spinning millions of times per second.</div>
+      </div>
+
+      <h2>Keeping the interrupt handler short</h2>
+      <p>
+        An interrupt handler runs at an awkward moment, interrupting whatever the OS was doing. The
+        longer it takes, the longer everything else is stalled, and other interrupts may be blocked
+        meanwhile.
+      </p>
+      <p>
+        So the design splits the work. The handler does the minimum and leaves the waiting to ordinary
+        code.
+      </p>
+
+      <div id="m-split"></div>
+
+      <p>
+        The handler never blocks and never waits. It appends a character and sets a flag. All the waiting
+        happens in <code>read_line</code>, which is normal code that can afford to sit still.
+      </p>
+
+      <div id="w-handler"></div>
+
+      <h2>The shared buffer, and why volatile appears</h2>
+      <p>
+        Two pieces of code touch the same variables at unpredictable times: the interrupt handler writes
+        them, and <code>read_line</code> reads them. That is exactly the situation
+        <code>volatile</code> exists for.
+      </p>
+
+      <div id="w-shared"></div>
+
+      <p>
+        Without <code>volatile</code> on <code>line_ready</code>, the compiler looks at the waiting loop,
+        sees nothing inside it that changes the flag, and is entitled to read the value once and loop on
+        that copy forever. The OS would hang on the first keystroke.
+      </p>
+
+      <div id="q-volatile"></div>
+
+      <h2>The bounds check that prevents a real disaster</h2>
+      <p>
+        The buffer is 128 bytes. If somebody holds down a key and the driver keeps appending, writing
+        past the end would corrupt whatever memory sits after the array, with no warning at all.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">The guard, from keyboard.cpp</div>
+        <div class="st-code">} else if (line_length &lt; sizeof(line_buffer) - 1) {
+    line_buffer[line_length++] = c;
+    putchar(c);
+}</div>
+        <div class="hint">The minus one leaves room for the terminating zero byte. Once full, extra keystrokes are silently dropped rather than overflowing. Using sizeof rather than a literal 128 means the check stays correct if the buffer size changes.</div>
+      </div>
+
+      <div class="box warn">
+        <span class="t">No safety net exists here</span>
+        In a normal program a buffer overflow might crash with a clear error. In a kernel there is nothing
+        to catch it. You would overwrite another variable, or the stack, and the symptom would appear
+        somewhere entirely unrelated much later. Bounds checks are not optional at this level.
+      </div>
+
+      <h2>The whole path, from key to string</h2>
+      <p>
+        Putting it together, here is what happens between a finger moving and the shell receiving a
+        command.
+      </p>
+
+      <div id="s-path"></div>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("keyboard");
+
+Guide.memMap("m-scan", {
+  title: "Some real scancodes, click to compare",
+  segments: [
+    { label: "0x1E", weight: 1, addr: "make code for A", desc: "The key right of caps lock. On a US layout that is A, on AZERTY it is Q. The keyboard sends 0x1E either way, so the layout is purely a software decision." },
+    { label: "0x1F", weight: 1, addr: "make code for S", desc: "The next key along the same row. Codes follow physical position, which is why they run in rows rather than alphabetically." },
+    { label: "0x02", weight: 1, addr: "make code for 1", desc: "Top number row starts at 0x02, not 0x01. Code 0x01 is escape. The numbering starts at the top left of the keyboard." },
+    { label: "0x1C", weight: 1, addr: "make code for enter", desc: "The lessons map this to the newline character, which is what tells read_line the line is finished." },
+    { label: "0x0E", weight: 1, addr: "make code for backspace", desc: "Mapped to the backspace character, which putchar handles specially by stepping back and writing a space." },
+    { label: "0x2A", weight: 1, addr: "make code for left shift", desc: "Not a character at all. The driver treats it as a state change and never echoes anything." },
+    { label: "0x39", weight: 1, addr: "make code for space", desc: "One of the higher codes because the space bar is at the bottom of the keyboard." }
+  ],
+  hint: "The table in keyboard.cpp is an array indexed by scancode, so these numbers are literally positions in that array."
+});
+
+Guide.codeWalk("w-table", {
+  title: "The translation table, from keyboard.cpp",
+  code: "const char scancode_to_char[128] = {\n    0,   0,   '1', '2', '3', '4', '5', '6', '7', '8', '9', '0', '-', '=', '\\b',\n    '\\t','q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', '[', ']', '\\n',\n    0,   'a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', ';', '\\'','`',\n    0,   '\\\\','z', 'x', 'c', 'v', 'b', 'n', 'm', ',', '.', '/',\n    0,   '*', 0,   ' ',\n};",
+  notes: [
+    { lines: [1, 1], text: "128 entries because scancodes for presses run from 0 to 127. The release codes are 128 and above, so they never index this array, which is why the release check has to come first." },
+    { lines: [2, 2], text: "Position 0 is unused and position 1 is escape, both mapped to zero meaning no character. The number row follows, which is why 1 is at index 2." },
+    { lines: [3, 3], text: "Reading across gives qwerty in order. That is the top letter row of the keyboard, and it is the clearest sign this table follows physical layout." },
+    { lines: [4, 4], text: "Index 30 is zero, that is caps lock, deliberately unmapped. Then asdf, the home row." },
+    { lines: [5, 5], text: "Index 42 is zero, that is left shift. Mapping it to a character would type something every time you pressed shift, so it is handled separately before the lookup." },
+    { lines: [2, 6], text: "Zeros mean no printable character. The handler checks for zero and returns early, which silently ignores every key the table does not cover, including the function keys and arrows." }
+  ]
+});
+
+Guide.bitfield("m-break", {
+  title: "Press versus release, one bit apart",
+  intro: "Click bit 7 to turn a make code into a break code. Start from 30, which is 0x1E, the A key.",
+  width: 8,
+  value: 30,
+  fields: [
+    { bit: 7, name: "release bit", desc: "0 means the key went down, 1 means it came up. Setting it adds 0x80" },
+    { bits: [6, 0], name: "key identity", desc: "the actual scancode, unchanged by pressing or releasing" }
+  ],
+  match: {
+    "30": "0x1E, the A key going DOWN. This indexes the translation table and produces the letter a",
+    "158": "0x9E, the A key coming UP. Bit 7 set, so the driver ignores it",
+    "42": "0x2A, left shift going DOWN. The driver sets shift_held to true",
+    "170": "0xAA, left shift coming UP. The driver sets shift_held back to false"
+  }
+});
+
+Guide.codeWalk("w-release", {
+  title: "The order of the checks matters, from keyboard.cpp",
+  code: "void keyboard_handle_scancode(uint8_t scancode) {\n    if (scancode == 0x2A) { shift_held = true;  return; }\n    if (scancode == 0xAA) { shift_held = false; return; }\n    if (scancode & 0x80)  { return; }\n\n    char c = scancode_to_char[scancode];\n    if (c == 0) return;\n    if (shift_held && c >= 'a' && c <= 'z') c -= 0x20;",
+  notes: [
+    { lines: [2, 3], text: "Shift is checked first, before the general release test. It has to be, because 0xAA has bit 7 set and would otherwise be thrown away as just another release." },
+    { lines: [4, 4], text: "Now discard every other release. Masking with 0x80 tests bit 7. This single line is what stops each key producing two characters." },
+    { lines: [4, 4], text: "It also protects the array lookup below. Release codes are 128 and up, and the table only has 128 entries, so indexing with one would read past the end." },
+    { lines: [6, 7], text: "Look up the character. A zero means this key has no printable character, so nothing is echoed and nothing is stored." },
+    { lines: [8, 8], text: "Uppercase by subtracting 0x20, since ASCII puts uppercase exactly 32 below lowercase. The range check stops it mangling digits and punctuation, where the same arithmetic would produce nonsense." }
+  ],
+  hint: "Reorder any of the first four lines and the driver breaks in a different way. That ordering is the whole logic of the function."
+});
+
+Guide.stepper("s-shift", {
+  title: "Typing a capital A, one interrupt at a time",
+  steps: [
+    {
+      head: "Nothing pressed yet",
+      text: "The driver starts with shift not held. That variable lives at file scope so it survives between interrupts.",
+      state: { "shift_held": "false", "line_buffer": "empty" }
+    },
+    {
+      head: "Interrupt: scancode 0x2A arrives",
+      text: "Left shift went down. This is a state change, not a character, so the driver records it and returns without echoing anything.",
+      code: "if (scancode == 0x2A) { shift_held = true; return; }",
+      state: { "shift_held": "true", "on screen": "nothing" }
+    },
+    {
+      head: "Interrupt: scancode 0x1E arrives",
+      text: "The A key went down. The table gives lowercase a, but shift is held, so 0x20 is subtracted to make it uppercase.",
+      code: "char c = scancode_to_char[0x1E];      // 'a'\nif (shift_held && c >= 'a' && c <= 'z')\n    c -= 0x20;                        // 'A'",
+      state: { "shift_held": "true", "character": "'A'", "on screen": "A" }
+    },
+    {
+      head: "Interrupt: scancode 0x9E arrives",
+      text: "The A key came up. Bit 7 is set, so the driver discards it. Without this the letter would appear twice.",
+      code: "if (scancode & 0x80) { return; }",
+      state: { "on screen": "A", "action": "ignored" }
+    },
+    {
+      head: "Interrupt: scancode 0xAA arrives",
+      text: "Shift came up. Checked before the general release test, so it clears the state rather than being discarded.",
+      code: "if (scancode == 0xAA) { shift_held = false; return; }",
+      state: { "shift_held": "false", "on screen": "A" }
+    },
+    {
+      head: "Four interrupts for one letter",
+      text: "Two presses and two releases produced a single character. The driver's job is deciding which of those events matter.",
+      state: { "interrupts": "4", "characters produced": "1" }
+    }
+  ],
+  hint: "Each interrupt sees exactly one scancode with no memory of the others, which is why shift state has to be stored outside the function."
+});
+
+Guide.memMap("m-poll", {
+  title: "Polling versus interrupts, click each",
+  segments: [
+    { label: "polling, lesson 3", weight: 1, addr: "the old way", desc: "Loop forever reading the keyboard status port, asking has a key arrived yet. The CPU is fully busy doing nothing, and if the OS is off doing something else it misses keystrokes entirely. Simple to write, wasteful to run." },
+    { label: "interrupts, lesson 11", weight: 1, addr: "the real way", desc: "The keyboard controller raises a signal when a key arrives. The CPU stops what it was doing, runs the handler, then resumes. In between it can sleep with hlt, using almost no power, and nothing is ever missed." }
+  ],
+  hint: "The change is who initiates. With polling the CPU asks, with interrupts the hardware tells."
+});
+
+Guide.memMap("m-split", {
+  title: "Who does what, click each side",
+  segments: [
+    { label: "the interrupt handler", weight: 1, addr: "keyboard_handle_scancode", desc: "Runs at an unpredictable moment, interrupting whatever was happening. Tracks shift, converts one scancode to a character, echoes it, appends it to the buffer, and on enter sets line_ready. Never waits for anything." },
+    { label: "ordinary code", weight: 1, addr: "read_line", desc: "Called by the shell. Sleeps with hlt until line_ready becomes true, then copies the finished line into the caller's buffer. All the waiting lives here, where stalling is harmless." }
+  ],
+  hint: "The rule is that handlers do the minimum and get out. Anything that might block belongs in normal code."
+});
+
+Guide.codeWalk("w-handler", {
+  title: "What happens on enter, from keyboard.cpp",
+  code: "if (c == '\\n') {\n    putchar('\\n');\n    line_buffer[line_length] = '\\0';\n    line_ready = true;\n} else if (c == '\\b') {\n    if (line_length > 0) {\n        line_length--;\n        putchar('\\b');\n    }\n} else if (line_length < sizeof(line_buffer) - 1) {\n    line_buffer[line_length++] = c;\n    putchar(c);\n}",
+  notes: [
+    { lines: [2, 2], text: "Echo the newline so the cursor moves to the next line on screen. The handler is responsible for all visible feedback." },
+    { lines: [3, 3], text: "Terminate the string. C style strings end at a zero byte, and without this the shell would read past the typed text into whatever the buffer held before." },
+    { lines: [4, 4], text: "Set the flag last, after the buffer is fully valid. Setting it earlier would let read_line wake up and copy an unterminated string." },
+    { lines: [6, 9], text: "Backspace shortens the buffer and tells the screen to erase. The length check stops it going negative, which would be a huge number since the type is unsigned." },
+    { lines: [10, 10], text: "The bounds check. Once the buffer is nearly full, further characters are dropped instead of writing past the end." },
+    { lines: [11, 11], text: "Store and advance in one expression. The post increment means the character lands at the old length, then length grows." }
+  ]
+});
+
+Guide.codeWalk("w-shared", {
+  title: "The shared state, from keyboard.cpp",
+  code: "static char line_buffer[128];\nstatic volatile size_t line_length = 0;\nstatic volatile bool   line_ready  = false;\n\nvoid read_line(char* buffer, size_t max) {\n    line_length = 0;\n    line_ready  = false;\n\n    while (!line_ready) {\n        asm volatile (\"hlt\");\n    }\n\n    size_t i = 0;\n    while (i < max - 1 && line_buffer[i] != '\\0') {\n        buffer[i] = line_buffer[i];\n        i++;\n    }\n    buffer[i] = '\\0';\n}",
+  notes: [
+    { lines: [2, 3], text: "volatile because the interrupt handler changes these behind the compiler's back. Without it the waiting loop below could spin on a cached value forever." },
+    { lines: [1, 1], text: "The buffer itself is not volatile. It is only read after line_ready says the whole line is finished, so there is no partial read to worry about." },
+    { lines: [6, 7], text: "Reset the state before waiting, so a stale flag from a previous line does not make this call return instantly." },
+    { lines: [9, 11], text: "The wait. hlt stops the CPU until an interrupt arrives, so this loop costs essentially nothing while the user is thinking." },
+    { lines: [13, 17], text: "Copy into the caller's buffer, stopping at max minus one to leave room for the terminator. The caller decides how much space it has, and this respects it." },
+    { lines: [18, 18], text: "Always terminate, even if the copy stopped early because the caller's buffer was smaller." }
+  ]
+});
+
+Guide.stepper("s-path", {
+  title: "From a finger to a shell command",
+  steps: [
+    {
+      head: "A key is pressed",
+      text: "The keyboard controller latches a scancode and raises the IRQ1 line to the interrupt controller.",
+      state: { "hardware": "scancode waiting at port 0x60" }
+    },
+    {
+      head: "The PIC signals the CPU",
+      text: "The interrupt controller passes the request on. Because the lessons remapped it, IRQ1 arrives as interrupt number 33 rather than 9.",
+      state: { "interrupt number": "33" }
+    },
+    {
+      head: "The CPU jumps to the stub",
+      text: "The IDT entry for 33 points at the irq1 stub in assembly, which saves registers and calls the C++ dispatcher.",
+      code: "idt_set_entry(33, (uint32_t)irq1, 0x08, 0x8E);",
+      state: { "running": "irq1 stub" }
+    },
+    {
+      head: "The dispatcher reads the port",
+      text: "interrupt_handler recognises number 33, reads the scancode out of port 0x60, and hands it to the keyboard driver.",
+      code: "uint8_t scancode = inb(KEYBOARD_DATA_PORT);\nkeyboard_handle_scancode(scancode);\npic_send_eoi(1);",
+      state: { "scancode": "read and consumed" }
+    },
+    {
+      head: "The driver converts and stores",
+      text: "Shift is applied if held, the character is echoed to the screen, and it is appended to the line buffer.",
+      state: { "line_buffer": "growing", "on screen": "the character appears" }
+    },
+    {
+      head: "Enter arrives",
+      text: "The handler terminates the string and sets line_ready. It does not call the shell, it just raises a flag.",
+      state: { "line_ready": "true" }
+    },
+    {
+      head: "read_line wakes up",
+      text: "The sleeping loop sees the flag, copies the line into the shell's buffer and returns. The shell compares it against its commands.",
+      code: "read_line(line, sizeof(line));\nrun_command(line);",
+      state: { "shell": "has the full command" }
+    }
+  ],
+  hint: "Seven stages, and only two of them are the keyboard driver. The rest is interrupt plumbing covered on the interrupts and PIC pages."
+});
+
+Guide.quiz("q-break", {
+  question: "Why must the shift release check come before the general release check?",
+  options: [
+    { text: "Because 0xAA has bit 7 set, so the general check would discard it", correct: true, why: "Right. 0xAA is 1010 1010, and bit 7 is on because it is a release code. If the general test ran first it would return early and shift_held would stay true forever, so everything you typed afterwards would be uppercase." },
+    { text: "Because shift codes are not in the translation table", why: "True but not the reason for the ordering. Plenty of keys are missing from the table and they are handled by the zero check further down." },
+    { text: "Because shift is pressed more often than other keys", why: "Frequency has nothing to do with it. This is about one check swallowing an event the other one needed." },
+    { text: "Because the CPU delivers shift on a different interrupt", why: "Every key comes through the same IRQ1. Only the scancode differs." }
+  ]
+});
+
+Guide.quiz("q-volatile", {
+  question: "You remove volatile from line_ready. What is the most likely symptom?",
+  options: [
+    { text: "The OS hangs at the first prompt, even though keys still echo to the screen", correct: true, why: "Correct, and the split symptom is the clue. Echoing happens inside the handler which still runs fine, so characters appear. But the waiting loop in read_line may have cached the flag as false and will never see it change, so the shell never receives the line." },
+    { text: "Nothing changes, since volatile is only a hint", why: "It is a real instruction to the compiler, not a hint. Removing it permits an optimisation that breaks the loop." },
+    { text: "The keyboard stops producing interrupts", why: "The hardware is unaffected. This is purely about what the compiler assumes regarding a variable in memory." },
+    { text: "It crashes with a clear error about reading stale memory", why: "There is nothing in a kernel to detect this. The failure is a silent hang, which is what makes missing volatile so unpleasant to debug." }
+  ]
+});
+</script>
+</body>
+</html>

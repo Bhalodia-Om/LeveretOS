@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>Bits, bytes and hex, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Foundations</div>
+      <h1>Bits, bytes and hex</h1>
+      <p class="lede">Hardware does not deal in numbers the way your programs do. It deals in individual wires that are on or off. This page is how you read that.</p>
+
+      <h2>A byte is eight switches</h2>
+      <p>
+        A bit is one switch: on or off, 1 or 0. A byte is eight of them side by side. That is the
+        whole idea. Everything else on this page is notation for describing which switches are on.
+      </p>
+      <p>
+        Bits are numbered from the right, starting at zero. The rightmost bit is bit 0, the leftmost
+        in a byte is bit 7. That feels backwards until you see why: bit 0 is the ones column, bit 1
+        is the twos column, bit 2 is the fours column. Bit <em>n</em> is worth 2 to the power of
+        <em>n</em>, so numbering from the right keeps the maths tidy.
+      </p>
+
+      <div id="m-basic"></div>
+
+      <div class="box info">
+        <span class="t">Try this</span>
+        Turn on bit 1 and bit 3 above. You get 2 + 8 = 10, which is <code>0x0A</code> in hex.
+        Every hex value in the lessons is just a set of switches like this.
+      </div>
+
+      <h2>Why hex instead of decimal</h2>
+      <p>
+        Decimal hides the bits. The number 154 tells you nothing about which switches are on. Hex
+        shows them, because one hex digit is exactly four bits. Always. That fixed relationship is
+        the entire reason hardware documentation is written in hex.
+      </p>
+
+      <table class="gt">
+        <thead><tr><th>Hex digit</th><th>Bits</th><th>Decimal</th></tr></thead>
+        <tbody>
+          <tr><td><code>0</code></td><td><code>0000</code></td><td>0</td></tr>
+          <tr><td><code>1</code></td><td><code>0001</code></td><td>1</td></tr>
+          <tr><td><code>7</code></td><td><code>0111</code></td><td>7</td></tr>
+          <tr><td><code>8</code></td><td><code>1000</code></td><td>8</td></tr>
+          <tr><td><code>A</code></td><td><code>1010</code></td><td>10</td></tr>
+          <tr><td><code>F</code></td><td><code>1111</code></td><td>15</td></tr>
+        </tbody>
+      </table>
+
+      <p>
+        A four bit group is called a nibble, half a byte. So a byte is two hex digits, and you can
+        read each half independently. <code>0x9A</code> is nibble <code>9</code> (<code>1001</code>)
+        then nibble <code>A</code> (<code>1010</code>). Put together: <code>1001 1010</code>. You
+        never have to do division to convert, you just look up each digit.
+      </p>
+      <p>
+        That is why the lessons use <code>0x</code> numbers everywhere. <code>0xFF</code> is
+        obviously all eight bits on. 255 is not obviously anything.
+      </p>
+
+      <div id="q-hex"></div>
+
+      <h2>Masking with AND</h2>
+      <p>
+        The <code>&amp;</code> operator compares two numbers bit by bit. A result bit is 1 only if
+        <em>both</em> input bits were 1. On its own that sounds abstract, so here is what it is
+        actually for: <strong>keeping some bits and throwing the rest away</strong>.
+      </p>
+      <p>
+        Say you have a 16 bit value and you only want the bottom eight bits. You AND it with
+        <code>0xFF</code>, which is <code>11111111</code>. Any bit lined up with a 1 survives
+        unchanged. Any bit lined up with a 0 becomes 0. So the bottom byte passes through and
+        everything above it is erased.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">What masking looks like</div>
+        <div class="st-code">  0x0806  =  0000 1000 0000 0110
+&amp; 0x00FF  =  0000 0000 1111 1111
+                ---------------------
+  result  =  0000 0000 0000 0110  =  0x06</div>
+        <div class="hint">The high byte 0x08 got masked away. Only the low byte 0x06 is left.</div>
+      </div>
+
+      <p>
+        This pattern shows up constantly in the lessons, because hardware registers are often eight
+        bits wide while the values you want to put in them are wider. You will see
+        <code>value &amp; 0xFF</code> every time a 16 bit number has to be squeezed into an 8 bit
+        port.
+      </p>
+
+      <div class="box">
+        <span class="t">Common masks worth memorising</span>
+        <code>0x0F</code> keeps the low nibble. <code>0xF0</code> keeps the high nibble.
+        <code>0xFF</code> keeps one byte. <code>0xFFFF</code> keeps two bytes.
+        Fs keep, zeros erase.
+      </div>
+
+      <h2>Setting with OR</h2>
+      <p>
+        <code>|</code> is the opposite tool. A result bit is 1 if <em>either</em> input bit was 1.
+        You use it to <strong>turn bits on without disturbing the others</strong>.
+      </p>
+      <p>
+        This is how the lessons combine flags. In the paging code a page table entry is built with
+        <code>(i * 0x1000) | PAGE_PRESENT | PAGE_WRITABLE</code>. The address provides the high
+        bits, then each OR switches on one more flag in the low bits. Nothing already set gets lost.
+      </p>
+
+      <div id="m-or"></div>
+
+      <h2>Shifting</h2>
+      <p>
+        <code>&lt;&lt;</code> and <code>&gt;&gt;</code> slide bits left or right. Shifting left by
+        one doubles the number, shifting right by one halves it, because every bit moves one column
+        over. But in hardware code you rarely care about the arithmetic. You are moving bits to a
+        specific position.
+      </p>
+      <p>
+        <code>1 &lt;&lt; 5</code> means "a single 1 bit, parked in position 5". That is
+        <code>0010 0000</code>, or <code>0x20</code>. It is the standard way to build a mask for
+        one specific bit, and it reads much better than writing <code>0x20</code> and hoping the
+        reader counts correctly.
+      </p>
+
+      <div id="m-shift"></div>
+
+      <p>
+        The other big use is pulling a piece out of a wide value. To get the high byte of a 16 bit
+        number, shift it right by 8 so the high byte lands in the low position, then mask with
+        <code>0xFF</code> to trim anything else. That combination,
+        <code>(v &gt;&gt; 8) &amp; 0xFF</code>, appears all over the networking code.
+      </p>
+
+      <div class="box warn">
+        <span class="t">The 1 versus 1u trap</span>
+        In the PMM you will see <code>1u &lt;&lt; (frame % 32)</code> with a <code>u</code>.
+        Shifting a plain <code>1</code> into bit 31 is technically undefined behaviour in C++,
+        because bit 31 is the sign bit of a signed int. The <code>u</code> makes it unsigned, where
+        bit 31 is just another bit. It never bites you until it does, so the lessons write
+        <code>1u</code> whenever a shift might reach that far.
+      </div>
+
+      <h2>Clearing a bit, the NOT trick</h2>
+      <p>
+        Turning a bit <em>off</em> takes two operators. You cannot AND a bit away directly, because
+        AND needs a mask with a 0 in exactly one position and 1s everywhere else. Building that by
+        hand is awkward, so you build the opposite and flip it.
+      </p>
+      <p>
+        <code>~</code> inverts every bit. So <code>1u &lt;&lt; 5</code> gives you
+        <code>0010 0000</code>, and <code>~(1u &lt;&lt; 5)</code> gives you <code>1101 1111</code>,
+        which is exactly the mask you want: zero in position 5, ones everywhere else. AND with that
+        and bit 5 is cleared while the rest pass through untouched.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">The three bit operations from the PMM</div>
+        <div class="st-code">// turn bit on
+frame_bitmap[frame / 32] |=  (1u &lt;&lt; (frame % 32));
+
+// turn bit off
+frame_bitmap[frame / 32] &amp;= ~(1u &lt;&lt; (frame % 32));
+
+// test bit
+frame_bitmap[frame / 32] &amp;   (1u &lt;&lt; (frame % 32));</div>
+        <div class="hint">Set, clear, test. Once these three read naturally, most low level code stops looking cryptic.</div>
+      </div>
+
+      <div id="q-clear"></div>
+
+      <h2>Where this goes next</h2>
+      <p>
+        Now that single bits make sense, the next page is about grouping them. Hardware almost never
+        uses one bit at a time. It packs a whole set of settings into one byte, and you have to know
+        which bit means what.
+      </p>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("bits");
+
+Guide.bitfield("m-basic", {
+  title: "One byte, eight switches. Click them.",
+  intro: "Each square is one bit. The small number is its position. Watch all three representations change together.",
+  width: 8,
+  value: 0,
+  fields: [
+    { bit: 0, name: "bit 0", desc: "worth 1" },
+    { bit: 1, name: "bit 1", desc: "worth 2" },
+    { bit: 2, name: "bit 2", desc: "worth 4" },
+    { bit: 3, name: "bit 3", desc: "worth 8" },
+    { bit: 4, name: "bit 4", desc: "worth 16" },
+    { bit: 5, name: "bit 5", desc: "worth 32" },
+    { bit: 6, name: "bit 6", desc: "worth 64" },
+    { bit: 7, name: "bit 7", desc: "worth 128" }
+  ]
+});
+
+Guide.bitfield("m-or", {
+  title: "Building a value with OR, like a page table entry",
+  intro: "Click the two flag rows below. Each OR adds one bit without touching the others. This is exactly how paging builds an entry.",
+  width: 8,
+  value: 0,
+  fields: [
+    { bit: 0, name: "PAGE_PRESENT", desc: "0x1, this entry is valid and mapped" },
+    { bit: 1, name: "PAGE_WRITABLE", desc: "0x2, writing is allowed, not just reading" }
+  ],
+  match: {
+    "0": "nothing set, the CPU would fault on this page",
+    "1": "present but read only",
+    "2": "writable bit set but not present, useless on its own",
+    "3": "present and writable, this is what the lessons use"
+  }
+});
+
+Guide.bitfield("m-shift", {
+  title: "1 << n, a single bit parked in one position",
+  intro: "Click a single bit and read the hex. That value is what 1 << n produces for that position.",
+  width: 8,
+  value: 32,
+  fields: [
+    { bit: 5, name: "1 << 5", desc: "0x20, used as the PIC monitor mode bit in RCR" },
+    { bit: 4, name: "1 << 4", desc: "0x10, the remote DMA write command in the NE2000 CR" },
+    { bit: 2, name: "1 << 2", desc: "0x04, accept broadcast in RCR, and transmit in CR" },
+    { bit: 1, name: "1 << 1", desc: "0x02, start the card in CR" },
+    { bit: 0, name: "1 << 0", desc: "0x01, stop the card in CR" }
+  ],
+  match: {
+    "1": "0x01, CR_STOP",
+    "2": "0x02, CR_START",
+    "4": "0x04, CR_TRANS or RCR accept broadcast",
+    "16": "0x10, CR_RDMA_WR",
+    "32": "0x20, RCR monitor mode",
+    "64": "0x40, ISR remote DMA complete",
+    "128": "0x80, ISR reset complete"
+  }
+});
+
+Guide.quiz("q-hex", {
+  question: "What is 0xC0 in binary?",
+  options: [
+    { text: "1100 0000", correct: true, why: "Right. C is 1100 and 0 is 0000, so bits 7 and 6 are on. In the PIC code that pattern selects a register page." },
+    { text: "0000 1100", why: "That would be 0x0C. Read the digits in order: the first hex digit is the high nibble." },
+    { text: "1010 1010", why: "That is 0xAA, which the keyboard code uses for the shift key being released." },
+    { text: "1111 0000", why: "That is 0xF0, a mask that keeps the high nibble." }
+  ]
+});
+
+Guide.quiz("q-clear", {
+  question: "You want to turn OFF bit 3 of a byte and leave every other bit alone. Which expression does it?",
+  options: [
+    { text: "value &= ~(1u << 3);", correct: true, why: "Correct. 1u << 3 is 0000 1000, the ~ flips it to 1111 0111, and AND with that clears only bit 3." },
+    { text: "value |= (1u << 3);", why: "That turns the bit ON. OR can only set bits, never clear them." },
+    { text: "value &= (1u << 3);", why: "That clears every bit EXCEPT bit 3, the exact opposite of what you wanted. You forgot the ~." },
+    { text: "value ^= 0xFF;", why: "That flips all eight bits, which changes everything." }
+  ]
+});
+</script>
+</body>
+</html>

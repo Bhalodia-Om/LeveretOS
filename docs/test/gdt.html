@@ -1,0 +1,460 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="robots" content="noindex, nofollow" />
+<link rel="icon" type="image/svg+xml" href="../favicon.svg" />
+<title>The GDT, LeveretOS guide</title>
+<link rel="stylesheet" href="guide.css" />
+</head>
+<body>
+<div class="layout">
+  <main class="content">
+    <div class="inner">
+
+      <div class="crumb"><a href="index.html">Guide</a> / Talking to hardware</div>
+      <h1>The GDT</h1>
+      <p class="lede">A table that tells the CPU which regions of memory exist, who may touch them, and whether they hold code or data. GRUB set one up to get you booted, and now you replace it with your own.</p>
+
+      <h2>What a segment is</h2>
+      <p>
+        Before paging existed, x86 divided memory into segments. A segment is a described region: it has
+        a start address, a size, and a set of permissions. Every memory access the CPU makes goes through
+        one.
+      </p>
+      <p>
+        The description lives in a table, and the CPU holds small registers that point into that table.
+        When code runs, the CPU consults the code segment's entry. When a variable is read, it consults
+        the data segment's entry.
+      </p>
+
+      <div id="m-segs"></div>
+
+      <p>
+        The lessons make all three segments cover the entire 4 GB of address space, starting at zero.
+        That sounds like it defeats the purpose, and in a sense it does. This is called a flat memory
+        model, and it is deliberate.
+      </p>
+
+      <div class="box info">
+        <span class="t">Why flat segments</span>
+        Segmentation is the old way to protect memory and it is clumsy. Paging, built in lesson 15, does
+        the same job far better. So the GDT is set up to get out of the way: three overlapping segments
+        covering everything, no restrictions. It exists because the CPU insists on having one, and
+        because interrupts cannot be set up without it.
+      </div>
+
+      <h2>The real reason this lesson exists</h2>
+      <p>
+        The OS behaves identically before and after the GDT lesson, which makes it feel pointless. It is
+        not. Every interrupt gate in the IDT has to name a code segment for the handler to run in.
+      </p>
+
+      <div id="w-why"></div>
+
+      <p>
+        That <code>0x08</code> is a reference into the GDT. Without a GDT you control, there is nothing
+        valid to point at, and the interrupt lesson could not happen. The GDT is groundwork.
+      </p>
+
+      <h2>The awkward split layout</h2>
+      <p>
+        Here is the part that makes the code look strange. A descriptor is eight bytes, and the fields
+        inside it are not contiguous. The base address is split into three separate pieces, and the size
+        limit into two.
+      </p>
+
+      <div id="m-layout"></div>
+
+      <p>
+        This is a historical accident. The 80286 had 24 bit addresses and a smaller descriptor. When the
+        80386 extended everything to 32 bits, the new bits had to be bolted onto the end so old
+        descriptors kept working. Forty years later you are still writing code to reassemble them.
+      </p>
+
+      <div id="w-setentry"></div>
+
+      <p>
+        Every line in that function is the same pattern: shift the value down so the piece you want
+        reaches the bottom, then mask to keep only that piece. Exactly the technique from the
+        <a href="bits.html">bits page</a>.
+      </p>
+
+      <div id="m-split"></div>
+
+      <div id="q-split"></div>
+
+      <h2>The access byte</h2>
+      <p>
+        One byte holds the permissions. The two values in the lessons, <code>0x9A</code> and
+        <code>0x92</code>, differ by a single bit.
+      </p>
+
+      <div id="m-access"></div>
+
+      <p>
+        Bit 3 is the whole difference. Set means code, clear means data. Everything else is identical:
+        present, ring zero, a normal segment, and readable or writable.
+      </p>
+
+      <div class="box warn">
+        <span class="t">Read the bit meanings carefully</span>
+        Bit 1 means different things depending on bit 3. On a code segment it controls whether the code
+        can be <em>read</em> as data, and code is never writable. On a data segment it controls whether
+        the data can be <em>written</em>. Both of the lessons' segments set it, so code is readable and
+        data is writable.
+      </div>
+
+      <h2>The granularity byte and the 4 GB trick</h2>
+      <p>
+        There is a problem with covering 4 GB. The limit field is only 20 bits, which reaches 1048575.
+        Even as a byte count that is only 1 MB. So how does a 20 bit number describe 4 GB?
+      </p>
+
+      <div id="s-gran"></div>
+
+      <p>
+        The granularity bit changes the unit. Clear, the limit counts bytes. Set, it counts 4 KB blocks.
+        So the maximum limit of <code>0xFFFFF</code> becomes 1048576 blocks of 4096 bytes, which is
+        exactly 4 GB.
+      </p>
+
+      <div id="m-granbyte"></div>
+
+      <div id="q-gran"></div>
+
+      <h2>Handing the table to the CPU</h2>
+      <p>
+        The CPU does not want the table itself, it wants a tiny structure describing where the table is
+        and how big it is. That structure gets loaded with a dedicated instruction.
+      </p>
+
+      <div id="w-ptr"></div>
+
+      <p>
+        The minus one is a common source of confusion. The field holds the offset of the last valid
+        byte, not the number of bytes. Three entries of eight bytes is 24 bytes, and the last valid byte
+        is at offset 23. Get this wrong by one and the CPU either rejects your final entry or reads one
+        byte past the table.
+      </p>
+
+      <div id="q-limit"></div>
+
+      <h2>Why loading it takes assembly</h2>
+      <p>
+        Building the table is ordinary C++. Activating it is not, because of one register the CPU
+        refuses to let you write normally.
+      </p>
+
+      <div id="w-flush"></div>
+
+      <p>
+        The data segment registers accept a plain move. <code>CS</code>, the code segment register, does
+        not. Changing which code segment you are executing in is not a data operation, it is a change of
+        execution context, and the only instruction that does it is a far jump.
+      </p>
+
+      <div id="s-farjump"></div>
+
+      <p>
+        The jump goes to the very next line. Nothing moves in terms of program flow. The point is the
+        side effect: passing through a far jump reloads <code>CS</code> with the selector you named.
+      </p>
+
+      <h2>Selectors, and where 0x08 and 0x10 come from</h2>
+      <p>
+        A selector is not an index, it is a byte offset into the table. That is why the numbers jump by
+        eight rather than by one.
+      </p>
+
+      <div id="m-selectors"></div>
+
+      <p>
+        Entry one sits eight bytes into the table, so its selector is <code>0x08</code>. Entry two sits
+        sixteen bytes in, so <code>0x10</code>. The low three bits of a selector hold flags for the
+        privilege level, which is why real selectors are always multiples of eight.
+      </p>
+
+      <div id="q-selector"></div>
+
+      <h2>Why entry zero must be null</h2>
+      <p>
+        The first descriptor is required to be all zeros and is never used. It is a deliberate trap.
+      </p>
+      <p>
+        A selector of zero is the value you get from an uninitialised variable. By making entry zero
+        invalid, the CPU guarantees that accidentally using a zero selector raises a fault immediately
+        rather than silently accessing whatever entry zero happened to describe. It turns a silent bug
+        into a loud one.
+      </p>
+
+      <div class="mod">
+        <div class="mod-title">All three entries, from gdt.cpp</div>
+        <div class="st-code">gdt_set_entry(0, 0, 0,       0,    0);      // null, required by the CPU
+gdt_set_entry(1, 0, 0xFFFFF, 0x9A, 0xCF);   // code: 4 GB, ring 0, executable
+gdt_set_entry(2, 0, 0xFFFFF, 0x92, 0xCF);   // data: 4 GB, ring 0, writable</div>
+        <div class="hint">Both real segments start at 0 and cover everything. They overlap completely, which is the flat model. The only difference is the access byte.</div>
+      </div>
+
+    </div>
+  </main>
+</div>
+
+<script src="modules.js"></script>
+<script>
+Guide.chrome("gdt");
+
+Guide.memMap("m-segs", {
+  title: "The three descriptors, click each",
+  segments: [
+    { label: "entry 0, null", weight: 1, addr: "selector 0x00", desc: "All zeros. Required by the CPU and never used. It exists so that an accidental zero selector faults immediately instead of quietly working." },
+    { label: "entry 1, code", weight: 2, addr: "selector 0x08", desc: "Base 0, limit 0xFFFFF with 4 KB granularity, so it covers the full 4 GB. Access byte 0x9A: present, ring 0, executable and readable. This is the segment all your instructions run in." },
+    { label: "entry 2, data", weight: 2, addr: "selector 0x10", desc: "Identical range to the code segment. Access byte 0x92: present, ring 0, not executable but writable. Variables, the stack and the heap all live here." }
+  ],
+  hint: "Both real segments cover the same 4 GB. They overlap on purpose, which is what flat memory means."
+});
+
+Guide.codeWalk("w-why", {
+  title: "What actually needs the GDT, from idt.cpp",
+  code: "struct IdtEntry {\n    uint16_t offset_low;\n    uint16_t selector;     // which GDT code segment runs the handler\n    uint8_t  always_zero;\n    uint8_t  flags;\n    uint16_t offset_high;\n} __attribute__((packed));\n\n// every single gate names selector 0x08:\nidt_set_entry(0,  (uint32_t)isr0,  0x08, 0x8E);\nidt_set_entry(33, (uint32_t)irq1,  0x08, 0x8E);",
+  notes: [
+    { lines: [3, 3], text: "Every interrupt gate has to say which code segment the handler executes in. There is no option to leave it out." },
+    { lines: [10, 11], text: "0x08 is the selector for GDT entry 1, the code segment. Every one of the 34 gates in the lessons names it." },
+    { lines: [10, 11], text: "This is why the GDT lesson comes before the interrupt lesson. Without a code segment you control, there is no valid value to put here." }
+  ],
+  hint: "The GDT lesson changes nothing you can see, and the interrupt lesson is impossible without it."
+});
+
+Guide.memMap("m-layout", {
+  title: "Eight bytes of a descriptor, click each field",
+  segments: [
+    { label: "limit_low", weight: 2, addr: "bytes 0 to 1", desc: "The low 16 bits of the 20 bit size limit. The remaining 4 bits are stranded in the granularity byte further along." },
+    { label: "base_low", weight: 2, addr: "bytes 2 to 3", desc: "The low 16 bits of the 32 bit start address. Piece one of three." },
+    { label: "base_mid", weight: 1, addr: "byte 4", desc: "Bits 16 to 23 of the base address. Piece two of three." },
+    { label: "access", weight: 1, addr: "byte 5", desc: "The permission flags. 0x9A for code, 0x92 for data. Sits in the middle of the base address for purely historical reasons." },
+    { label: "granularity", weight: 1, addr: "byte 6", desc: "Low nibble holds the top 4 bits of the limit. High nibble holds size flags including the 4 KB granularity bit. Two unrelated things sharing a byte." },
+    { label: "base_high", weight: 1, addr: "byte 7", desc: "Bits 24 to 31 of the base address. Piece three of three, tacked on the end when the 386 extended addresses to 32 bits." }
+  ],
+  hint: "The base address is split across bytes 2, 3, 4 and 7, with the access byte sitting in the middle of it."
+});
+
+Guide.codeWalk("w-setentry", {
+  title: "Reassembling the fields, from gdt.cpp",
+  code: "static void gdt_set_entry(int i, uint32_t base, uint32_t limit,\n                          uint8_t access, uint8_t granularity) {\n    gdt[i].base_low    = base & 0xFFFF;\n    gdt[i].base_mid    = (base >> 16) & 0xFF;\n    gdt[i].base_high   = (base >> 24) & 0xFF;\n\n    gdt[i].limit_low   = limit & 0xFFFF;\n    gdt[i].granularity = ((limit >> 16) & 0x0F) | (granularity & 0xF0);\n\n    gdt[i].access      = access;\n}",
+  notes: [
+    { lines: [3, 3], text: "Mask with 0xFFFF to keep the low 16 bits. No shift needed, these bits are already at the bottom." },
+    { lines: [4, 4], text: "Shift right by 16 to bring bits 16 to 23 down to the bottom, then mask one byte. This is the extract pattern: shift to position, mask to size." },
+    { lines: [5, 5], text: "Shift right by 24 for the top byte. Masking with 0xFF here is belt and braces, since only 8 bits remain after the shift on a 32 bit value." },
+    { lines: [7, 7], text: "The limit's low 16 bits, same as the base's low field." },
+    { lines: [8, 8], text: "The busiest line in the function. Two different values share this byte, so both get masked to their own nibble and combined with OR." },
+    { lines: [8, 8], text: "Limit bits 16 to 19 shift down and mask to 0x0F, landing in the low nibble. The granularity flags mask to 0xF0, keeping only their high nibble. Neither can corrupt the other." },
+    { lines: [10, 10], text: "The access byte is the only field that fits whole, with no splitting at all." }
+  ]
+});
+
+Guide.packBuilder("m-split", {
+  title: "Split a base address yourself",
+  intro: "Type a 32 bit address and watch it break into the three pieces the descriptor wants. Try 0x00100000, which is 1 MB.",
+  label: "base address:",
+  value: "0x00100000",
+  srcBits: 32,
+  parts: [
+    { label: "base_low, low byte", expr: "base & 0xFF", calc: function (v) { return v & 0xFF; } },
+    { label: "base_low, high byte", expr: "(base >> 8) & 0xFF", calc: function (v) { return (v >>> 8) & 0xFF; } },
+    { label: "base_mid", expr: "(base >> 16) & 0xFF", calc: function (v) { return (v >>> 16) & 0xFF; } },
+    { label: "base_high", expr: "(base >> 24) & 0xFF", calc: function (v) { return (v >>> 24) & 0xFF; } }
+  ],
+  hint: "The lessons always pass 0 here, so every piece is zero. Try a real address to see why the splitting code has to exist."
+});
+
+Guide.bitfield("m-access", {
+  title: "The access byte, build 0x9A and 0x92",
+  intro: "Click the legend rows to toggle each flag. Turn on present, descriptor type, read or write, then flip bit 3 to switch between code and data.",
+  width: 8,
+  value: 0,
+  fields: [
+    { bit: 7, name: "present", desc: "this descriptor is valid and in use. Always set for a real segment" },
+    { bit: 6, name: "privilege bit 1", desc: "high bit of the 2 bit ring number" },
+    { bit: 5, name: "privilege bit 0", desc: "both privilege bits clear means ring 0, the kernel" },
+    { bit: 4, name: "descriptor type", desc: "1 means a normal code or data segment rather than a system descriptor" },
+    { bit: 3, name: "executable", desc: "1 makes it CODE, 0 makes it DATA. The single bit separating 0x9A from 0x92" },
+    { bit: 2, name: "direction or conforming", desc: "grow direction on data, privilege conforming on code. Left clear in both" },
+    { bit: 1, name: "read or write", desc: "readable on a code segment, writable on a data segment. Set in both of ours" },
+    { bit: 0, name: "accessed", desc: "the CPU sets this when the segment is used. We leave it clear" }
+  ],
+  match: {
+    "154": "0x9A, the code segment. Present, ring 0, normal, executable, readable",
+    "146": "0x92, the data segment. Present, ring 0, normal, not executable, writable",
+    "144": "0x90, present ring 0 data but NOT writable. Your variables would be read only",
+    "152": "0x98, a code segment that cannot be read as data. Legal, but the lessons allow reading",
+    "128": "0x80, present with no type bits. The CPU would reject this as malformed"
+  }
+});
+
+Guide.stepper("s-gran", {
+  title: "How 20 bits describes 4 GB",
+  steps: [
+    {
+      head: "The limit field is only 20 bits",
+      text: "Sixteen bits in limit_low plus four stranded in the granularity byte. That is 20 bits total, reaching a maximum of 0xFFFFF.",
+      state: { "max limit value": "0xFFFFF", "as a decimal": "1048575" }
+    },
+    {
+      head: "Counting bytes gets you 1 MB",
+      text: "With the granularity bit clear, the limit counts individual bytes. 1048575 bytes is just under one megabyte, nowhere near enough.",
+      state: { "granularity bit": "0", "segment covers": "1 MB" }
+    },
+    {
+      head: "Set the granularity bit",
+      text: "This changes the unit. The limit now counts 4096 byte blocks instead of single bytes.",
+      code: "gdt_set_entry(1, 0, 0xFFFFF, 0x9A, 0xCF);\n//                              ^^^^\n//                    0xC sets granularity and 32 bit mode",
+      state: { "granularity bit": "1", "unit": "4 KB blocks" }
+    },
+    {
+      head: "Do the arithmetic",
+      text: "1048576 blocks of 4096 bytes each. The CPU adds one to the limit internally, so 0xFFFFF means 0x100000 blocks.",
+      code: "0x100000 * 4096 = 0x100000000 = 4 GB exactly",
+      state: { "segment covers": "4 GB", "wasted space": "none" }
+    },
+    {
+      head: "The tradeoff",
+      text: "Segment sizes must now be multiples of 4 KB. That is irrelevant here, since the segment covers everything anyway, and it is the same 4 KB granularity paging will use later.",
+      state: { "cost": "4 KB alignment", "benefit": "full address space" }
+    }
+  ],
+  hint: "The same trick appears in paging. When a value must be aligned, its low bits are always zero, so you can use them for something else or drop them entirely."
+});
+
+Guide.bitfield("m-granbyte", {
+  title: "The granularity byte, 0xCF taken apart",
+  intro: "The high nibble holds flags, the low nibble holds the top of the limit. Two unrelated values in one byte.",
+  width: 8,
+  value: 0xCF,
+  fields: [
+    { bit: 7, name: "granularity", desc: "1 means the limit counts 4 KB blocks, not bytes. This is what reaches 4 GB" },
+    { bit: 6, name: "size", desc: "1 means a 32 bit segment. Clear would mean 16 bit, which we left behind with real mode" },
+    { bit: 5, name: "long mode", desc: "would mark a 64 bit segment. Clear, since the lessons are 32 bit" },
+    { bit: 4, name: "available", desc: "free for the OS to use for anything. Unused here" },
+    { bits: [3, 0], name: "limit bits 16 to 19", desc: "the top 4 bits of the 20 bit limit, stranded here by the historical layout" }
+  ],
+  match: {
+    "207": "0xCF, what the lessons use. Granularity and 32 bit set, plus limit bits all ones",
+    "79": "0x4F, 32 bit but granularity CLEAR. The segment would only cover 1 MB",
+    "192": "0xC0, the flags with a zero limit. A segment of one 4 KB block",
+    "15": "0x0F, limit bits set but no flags. 16 bit mode counting bytes"
+  }
+});
+
+Guide.codeWalk("w-ptr", {
+  title: "The pointer structure, from gdt.cpp",
+  code: "struct GdtPointer {\n    uint16_t limit;        // size of the table in bytes, minus 1\n    uint32_t base;         // address of the first entry\n} __attribute__((packed));\n\nstatic GdtEntry gdt[3];\nstatic GdtPointer gdt_ptr;\n\nvoid gdt_init() {\n    gdt_ptr.limit = sizeof(gdt) - 1;\n    gdt_ptr.base  = (uint32_t)&gdt;",
+  notes: [
+    { lines: [1, 4], text: "Six bytes total. The CPU's lgdt instruction reads exactly this shape, so packed is essential. Any padding between the two fields and the CPU reads the wrong address." },
+    { lines: [10, 10], text: "sizeof gives 24 for three 8 byte entries. The minus one is because the field holds the offset of the last valid byte, not a count. Byte 23 is the last one." },
+    { lines: [11, 11], text: "Taking the address of the array gives where the table lives in memory. The cast to uint32_t is because the struct field is a plain number, not a typed pointer." },
+    { lines: [6, 7], text: "Both are static, so they live in .bss and have fixed addresses for the whole life of the OS. A GDT on the stack would vanish when the function returned, with the CPU still pointing at it." }
+  ]
+});
+
+Guide.codeWalk("w-flush", {
+  title: "Activating the table, all of gdt_flush.s",
+  code: "global gdt_flush\n\ngdt_flush:\n    mov eax, [esp + 4]   ; the argument, address of our GdtPointer\n    lgdt [eax]           ; tell the CPU where the new GDT is\n\n    mov ax, 0x10         ; selector for entry 2, the data segment\n    mov ds, ax\n    mov es, ax\n    mov fs, ax\n    mov gs, ax\n    mov ss, ax\n\n    jmp 0x08:.flush      ; far jump reloads CS with entry 1\n.flush:\n    ret",
+  notes: [
+    { lines: [4, 4], text: "On 32 bit x86 arguments arrive on the stack. esp points at the return address, so esp+4 is the first argument." },
+    { lines: [5, 5], text: "lgdt loads the GDT register from that six byte structure. After this the CPU knows about the new table, but the segment registers still hold GRUB's old selectors." },
+    { lines: [7, 12], text: "Reload every data segment register with 0x10. These accept a plain move, so nothing clever is required." },
+    { lines: [12, 12], text: "ss is the stack segment. Reloading it matters because every push and pop goes through it." },
+    { lines: [14, 14], text: "CS cannot be set with mov. A far jump is the only way to change it, and this one names selector 0x08, our code segment." },
+    { lines: [14, 15], text: "The jump target is the next instruction. Nothing about program flow changes, the jump exists purely for its side effect on CS." },
+    { lines: [16, 16], text: "Return to gdt_init in C++. From here on every memory access goes through descriptors we wrote." }
+  ]
+});
+
+Guide.stepper("s-farjump", {
+  title: "Why CS needs a far jump",
+  steps: [
+    {
+      head: "Data segment registers are easy",
+      text: "ds, es, fs, gs and ss all accept an ordinary move instruction. Load the selector and the CPU starts using that descriptor.",
+      code: "mov ax, 0x10\nmov ds, ax",
+      state: { "ds": "0x10, our data segment" }
+    },
+    {
+      head: "CS refuses a move",
+      text: "The code segment register decides where the CPU is fetching instructions from. Changing it with a plain move would mean the very next instruction comes from somewhere new, mid stream. The CPU does not allow it.",
+      state: { "cs": "still GRUB's old selector" }
+    },
+    {
+      head: "A far jump specifies both a segment and an address",
+      text: "Unlike a normal jump, a far jump names the segment to jump into. That gives the CPU a defined moment to swap CS and continue cleanly.",
+      code: "jmp 0x08:.flush",
+      state: { "target segment": "0x08", "target address": ".flush" }
+    },
+    {
+      head: "The destination is the next line",
+      text: "Program flow does not really move anywhere. The jump exists only so CS gets reloaded as a side effect.",
+      code: "    jmp 0x08:.flush\n.flush:\n    ret",
+      state: { "cs": "0x08, our code segment" }
+    },
+    {
+      head: "This is why the function cannot be C++",
+      text: "There is no way to express a far jump in C++. The GDT is built in C++ and activated in assembly, which is why the lesson has both files.",
+      state: { "result": "all segment registers now use our GDT" }
+    }
+  ],
+  hint: "The same reasoning applies to lgdt. Some CPU state simply has no C++ equivalent."
+});
+
+Guide.memMap("m-selectors", {
+  title: "Selectors are byte offsets, click each",
+  segments: [
+    { label: "0x00", weight: 1, addr: "offset 0, entry 0", desc: "The null descriptor. Using this selector for anything real raises a fault, which is exactly the intent." },
+    { label: "0x08", weight: 1, addr: "offset 8, entry 1", desc: "The code segment. Eight bytes into the table because each entry is eight bytes. This is the value every IDT gate names and the far jump uses." },
+    { label: "0x10", weight: 1, addr: "offset 16, entry 2", desc: "The data segment. Sixteen bytes in. Loaded into ds, es, fs, gs and ss by gdt_flush." }
+  ],
+  hint: "Entry number times 8 gives the selector. The low three bits are reserved for privilege flags, which is why real selectors are always multiples of eight."
+});
+
+Guide.quiz("q-split", {
+  question: "Why is (base >> 16) & 0xFF used for base_mid rather than just base >> 16?",
+  options: [
+    { text: "The shift leaves bits 24 to 31 in the upper part, and the mask trims them off", correct: true, why: "Right. Shifting a 32 bit value right by 16 leaves 16 significant bits, but base_mid is only 8 bits wide. The mask keeps the low 8 of those. Without it you would rely on the assignment truncating, which works here but hides the intent." },
+    { text: "The mask converts the value to unsigned", why: "The value is already uint32_t. Masking changes which bits survive, not the signedness." },
+    { text: "The CPU requires all descriptor fields to be masked", why: "The CPU only sees the final bytes. The mask is about getting those bytes right in our own code." },
+    { text: "Without the mask the shift would be undefined behaviour", why: "Shifting an unsigned 32 bit value right by 16 is perfectly defined. The mask is about field width, not correctness of the shift." }
+  ]
+});
+
+Guide.quiz("q-gran", {
+  question: "You set the access and limit correctly but leave the granularity bit clear. What happens?",
+  options: [
+    { text: "The segment covers only about 1 MB, so any access above that faults", correct: true, why: "Correct. With granularity clear the limit counts bytes, so 0xFFFFF means roughly one megabyte. The kernel loads at exactly 1 MB, so almost every access would be outside the segment and the CPU would raise a general protection fault." },
+    { text: "Nothing changes, the limit is the same number either way", why: "The number is the same but the unit is not. Bytes versus 4 KB blocks is a factor of 4096 difference in the size described." },
+    { text: "The segment becomes 16 bit", why: "That is a different bit, bit 6 of the same byte. Granularity is bit 7 and controls the unit, not the operand size." },
+    { text: "The CPU rejects the descriptor at load time", why: "It is a perfectly valid descriptor, just one describing a much smaller segment. The failure comes later, when code accesses memory outside it." }
+  ]
+});
+
+Guide.quiz("q-limit", {
+  question: "gdt_ptr.limit is set to sizeof(gdt) - 1. What breaks if the minus one is dropped?",
+  options: [
+    { text: "The CPU thinks the table is one byte longer than it is and may read past the end", correct: true, why: "Right. The field means the offset of the last valid byte. With three entries the table spans offsets 0 to 23, so the correct value is 23. Saying 24 tells the CPU there is a byte at offset 24, which is outside the array." },
+    { text: "The last descriptor is ignored", why: "That would be the effect of subtracting too much, for example using sizeof minus 8. Dropping the minus one errs in the other direction." },
+    { text: "Nothing, since the CPU only reads entries it needs", why: "The limit is how the CPU validates any selector. A wrong limit changes which selectors it accepts." },
+    { text: "The base address becomes misaligned", why: "The base is a separate field set from the array's address. The limit does not affect it." }
+  ]
+});
+
+Guide.quiz("q-selector", {
+  question: "If you added a fourth GDT entry, what selector would it have?",
+  options: [
+    { text: "0x18, because it sits 24 bytes into the table", correct: true, why: "Correct. Selectors are byte offsets and each entry is eight bytes, so entry 3 is at offset 24 which is 0x18. The sequence runs 0x00, 0x08, 0x10, 0x18." },
+    { text: "0x03, since it is the fourth entry", why: "That would be true if selectors were indexes. They are byte offsets, which is why the existing ones are 0x08 and 0x10 rather than 1 and 2." },
+    { text: "0x11, one past the data segment", why: "The low three bits of a selector hold privilege flags, so valid entry selectors are always multiples of eight. 0x11 would point into the middle of entry 2." },
+    { text: "0x20, leaving a gap for safety", why: "No gaps are needed. Entries are packed end to end, so the next one starts immediately after the previous." }
+  ]
+});
+</script>
+</body>
+</html>
