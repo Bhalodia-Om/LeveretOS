@@ -109,7 +109,8 @@
       <p>
         Consider reading the keyboard port twice in a row. To the compiler, <code>inb(0x60)</code> is a
         function that takes 0x60 and returns a value, with no visible side effects. Called twice with
-        the same argument, it should give the same answer, so why do it twice?
+        the same argument, it looks like it should give the same answer both times, so the compiler
+        drops the second call.
       </p>
       <p>
         But reading the keyboard port actually consumes a scancode from the controller. The second read

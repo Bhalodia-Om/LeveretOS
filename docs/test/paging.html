@@ -31,7 +31,7 @@
       </p>
 
       <div class="box info">
-        <span class="t">Why bother</span>
+        <span class="t">What the lookup buys you</span>
         Three reasons. Two programs can both use address 0x400000 and get different physical memory, so
         they cannot interfere. An address with no mapping faults instead of silently corrupting something.
         And memory can appear contiguous to a program while being scattered physically. The lessons only
@@ -187,7 +187,7 @@
         of silently reading garbage, which is a genuine improvement over the situation before paging.
       </p>
 
-      <h2>What paging unlocks later</h2>
+      <h2>What paging makes possible later</h2>
       <p>
         The lessons stop at identity mapping, which is the minimum that works. Everything paging is
         actually famous for builds on this foundation.
@@ -268,7 +268,7 @@ Guide.stepper("s-translate", {
     {
       head: "Look up directory entry 0",
       text: "The CPU reads cr3 to find the directory, then reads entry 0. That entry holds the physical address of a page table, plus its flags.",
-      code: "page_directory[0] = ((uint32_t)first_table) | 0x3;",
+      code: "page_directory[0] = ((uint32_t)first_table) | PAGE_PRESENT | PAGE_WRITABLE;",
       state: { "entry 0 present bit": "1", "points to": "our first page table" }
     },
     {
@@ -279,7 +279,7 @@ Guide.stepper("s-translate", {
     {
       head: "Look up table entry 184",
       text: "Inside that page table, entry 184 holds the physical frame this page maps to. The lessons set every entry to point at the matching frame number.",
-      code: "first_table[184] = (184 * 0x1000) | 0x3;\n//                 = 0xB8000 | 0x3",
+      code: "first_table[184] = (184 * 0x1000) | PAGE_PRESENT | PAGE_WRITABLE;\n//                 = 0xB8000 | 0x3",
       state: { "frame address": "0x000B8000" }
     },
     {
@@ -370,7 +370,7 @@ Guide.stepper("s-identity", {
     {
       head: "Identity mapping makes translation a no-op",
       text: "Map virtual X to physical X for the region the kernel occupies. Translation still happens on every access, it just produces the same number it started with.",
-      code: "first_table[i] = (i * 0x1000) | 0x3;\n// entry i points at frame i",
+      code: "first_table[i] = (i * 0x1000) | PAGE_PRESENT | PAGE_WRITABLE;\n// entry i points at frame i",
       state: { "virtual 0x100000": "maps to physical 0x100000" }
     },
     {
@@ -448,7 +448,7 @@ Guide.memMap("m-cr", {
   title: "The two control registers, click each",
   segments: [
     { label: "cr3", weight: 1, addr: "the page directory base", desc: "Holds the physical address of the page directory. The CPU reads this on every translation that is not already cached. Loading a different value here is how a real OS switches between processes, since each gets its own directory." },
-    { label: "cr0", weight: 1, addr: "CPU feature flags", desc: "A collection of mode switches. Bit 31 is the paging enable bit. Setting it turns translation on for every memory access from the very next instruction onward. Other bits in this register control protected mode and caching." }
+    { label: "cr0", weight: 1, addr: "CPU feature flags", desc: "A collection of mode switches. Bit 31 is the paging enable bit. Setting it turns translation on for every memory access from the next instruction onward. Other bits in this register control protected mode and caching." }
   ],
   hint: "Neither can be touched from C++. Control registers have no C++ name, so this is one of the few places assembly is unavoidable."
 });
@@ -462,7 +462,7 @@ Guide.codeWalk("w-enable", {
     { lines: [5, 5], text: "Read cr0 into a normal variable. You cannot OR directly into a control register, so it comes out, gets modified, and goes back." },
     { lines: [6, 6], text: "Set bit 31. Written as 0x80000000 rather than 1u << 31, but the effect is identical, and this is the single bit that turns paging on." },
     { lines: [6, 6], text: "OR rather than assignment, because cr0 holds other active settings including the protected mode bit GRUB set. Overwriting the whole register would switch those off." },
-    { lines: [7, 7], text: "Write it back, and paging is live. The very next instruction fetch goes through the tables, which is why the identity map had to be correct before this line." }
+    { lines: [7, 7], text: "Write it back, and paging is live. The next instruction fetch goes through the tables, which is why the identity map had to be correct before this line." }
   ]
 });
 
@@ -520,7 +520,7 @@ Guide.quiz("q-identity", {
 Guide.quiz("q-order", {
   question: "What happens if you set the cr0 enable bit before loading cr3?",
   options: [
-    { text: "Paging switches on with cr3 holding a garbage address, so translation fails immediately and the machine triple faults", correct: true, why: "Correct. The instant the enable bit is set, the very next instruction fetch is translated using whatever cr3 happens to contain. Following a garbage pointer as a page directory fails, the fault cannot be delivered, and the machine resets with no message." },
+    { text: "Paging switches on with cr3 holding a garbage address, so translation fails immediately and the machine triple faults", correct: true, why: "Correct. The instant the enable bit is set, the next instruction fetch is translated using whatever cr3 happens to contain. Following a garbage pointer as a page directory fails, the fault cannot be delivered, and the machine resets with no message." },
     { text: "Nothing, since cr3 is loaded a moment later", why: "There is no grace period. The next instruction after the cr0 write is already being translated." },
     { text: "The CPU raises a general protection fault you can catch", why: "The fault handler's address also needs translating, which also fails. That escalation is what makes it a triple fault rather than a catchable error." },
     { text: "cr3 gets loaded automatically from the directory", why: "Nothing finds the directory for the CPU. cr3 is the only thing that tells it where to look." }

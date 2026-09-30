@@ -316,7 +316,7 @@ Guide.codeWalk("w-shared", {
     { lines: [2, 3], text: "volatile because the interrupt handler changes these behind the compiler's back. Without it the waiting loop below could spin on a cached value forever." },
     { lines: [1, 1], text: "The buffer itself is not volatile. It is only read after line_ready says the whole line is finished, so there is no partial read to worry about." },
     { lines: [6, 7], text: "Reset the state before waiting, so a stale flag from a previous line does not make this call return instantly." },
-    { lines: [9, 11], text: "The wait. hlt stops the CPU until an interrupt arrives, so this loop costs essentially nothing while the user is thinking." },
+    { lines: [9, 11], text: "The wait. hlt stops the CPU until an interrupt arrives, so this loop burns no cycles while the user is thinking." },
     { lines: [13, 17], text: "Copy into the caller's buffer, stopping at max minus one to leave room for the terminator. The caller decides how much space it has, and this respects it." },
     { lines: [18, 18], text: "Always terminate, even if the copy stopped early because the caller's buffer was smaller." }
   ]

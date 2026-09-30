@@ -278,7 +278,7 @@ Guide.stepper("s-gateway", {
     },
     {
       head: "Which means we need the gateway's MAC",
-      text: "And that is a local machine, one hop away, so ARP can answer it. This is the one lookup that unlocks everything beyond the local network.",
+      text: "And that is a local machine, one hop away, so ARP can answer it. Every packet bound for anywhere outside the local network depends on this one lookup.",
       code: "uint8_t gateway_ip[4] = { 10, 0, 2, 2 };\narp_resolve(gateway_ip, mac);",
       state: { "ARP target": "10.0.2.2, local" }
     },
@@ -290,7 +290,7 @@ Guide.stepper("s-gateway", {
     {
       head: "Which is why this lesson matters",
       text: "Every packet the OS ever sends to the outside world will be addressed to the MAC this lesson discovered. Without it, nothing leaves the machine.",
-      state: { "unlocked": "everything beyond the local segment" }
+      state: { "now reachable": "everything beyond the local segment" }
     }
   ],
   hint: "The postal analogy holds. You hand the letter to your local post office rather than driving it across the country yourself."

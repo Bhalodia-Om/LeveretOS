@@ -59,7 +59,8 @@
       <h2>One bit per frame</h2>
       <p>
         The bookkeeping is a bitmap: a long row of bits where each bit answers one question, is this frame
-        in use. One bit is the smallest possible answer, which makes the whole structure remarkably cheap.
+        in use. One bit is the smallest possible answer, which is what keeps the whole structure down to
+        128 KB for 4 GB of address space.
       </p>
 
       <div id="s-bitmapsize"></div>
@@ -181,7 +182,7 @@
         the machine has 4 GB, only that the allocator could cope if it did.
       </p>
 
-      <h2>What this allocator deliberately is not</h2>
+      <h2>The limits of this allocator</h2>
       <p>
         It is worth being clear about the limits, because the next lesson builds a different allocator on
         top for exactly these reasons.
@@ -216,7 +217,7 @@ Guide.memMap("m-patchwork", {
     { label: "usable RAM", weight: 2, addr: "0x00000000 to about 0x0009FFFF", desc: "Genuine RAM, roughly 640 KB of it. The original PC limit, and still where the map starts on most machines." },
     { label: "video memory", weight: 1, addr: "0x000A0000 to 0x000BFFFF", desc: "A window onto the display hardware, not RAM. The VGA text buffer at 0xB8000 lives here. Writing to it changes the screen, and treating it as free memory would corrupt the display." },
     { label: "BIOS and ROM", weight: 1, addr: "0x000C0000 to 0x000FFFFF", desc: "Firmware code and device option ROMs. Read only, and reserved. Nothing the OS may allocate." },
-    { label: "usable RAM", weight: 5, addr: "0x00100000 upward", desc: "The main block, everything above 1 MB. The kernel is loaded at the very start of this at 0x100000, which is why the linker script chose that address." },
+    { label: "usable RAM", weight: 5, addr: "0x00100000 upward", desc: "The main block, everything above 1 MB. The kernel is loaded at the start of this at 0x100000, which is why the linker script chose that address." },
     { label: "reserved at the top", weight: 1, addr: "near the 4 GB mark", desc: "ACPI tables, memory mapped PCI devices, and firmware areas. Also not RAM, also must not be allocated." }
   ],
   hint: "Only the regions GRUB marks as type 1 are real usable RAM. Everything else stays reserved."
@@ -277,7 +278,7 @@ Guide.stepper("s-bitmapsize", {
       head: "It costs nothing in the ISO",
       text: "The array is uninitialised, so it lands in .bss. That section takes address space but almost no file space, because the loader just zeroes it.",
       code: "static uint32_t frame_bitmap[BITMAP_WORDS];",
-      state: { "space in the ISO": "essentially zero", "space in RAM": "128 KB" }
+      state: { "space in the ISO": "none", "space in RAM": "128 KB" }
     }
   ],
   hint: "128 KB of bookkeeping to manage 4 GB. That ratio is why bitmaps are the standard choice for this job."
@@ -407,11 +408,11 @@ Guide.stepper("s-protect", {
     },
       {
       head: "Why it starts at frame zero",
-      text: "Not just the kernel, but everything below it too. Low memory contains the BIOS data area and interrupt vector remnants, and nothing there is safe to hand out.",
+      text: "The kernel and everything below it. Low memory contains the BIOS data area and interrupt vector remnants, and nothing there is safe to hand out.",
       state: { "first frame alloc_frame can return": "just past the kernel" }
     }
   ],
-  hint: "One loop, and without it the very first allocation destroys the OS."
+  hint: "One loop, and without it the first allocation destroys the OS."
 });
 
 Guide.codeWalk("w-protect", {
@@ -478,7 +479,7 @@ Guide.quiz("q-offset", {
   question: "The loop advances with offset += entry->size + 4. What breaks if you drop the plus four?",
   options: [
     { text: "Each step lands four bytes short, so the next entry is read misaligned and the whole list becomes garbage", correct: true, why: "Right. The size field reports the size of the entry not counting itself, so the true stride is size plus four. Falling short means the next cast reads from the middle of the previous entry, producing nonsense addresses and types. The loop might also never terminate." },
-    { text: "Only the last entry is missed", why: "The error compounds from the very first step, so every entry after the first is misread." },
+    { text: "Only the last entry is missed", why: "The error compounds from the first step, so every entry after the first is misread." },
     { text: "Nothing, since entries are usually the same size", why: "Even with uniform entries the stride would still be four bytes short each time, and the misalignment accumulates." },
     { text: "The loop runs forever", why: "It might, but the more immediate problem is reading garbage entries and freeing frames that are not RAM." }
   ]

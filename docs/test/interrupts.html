@@ -17,7 +17,7 @@
       <h1>Interrupts and the IDT</h1>
       <p class="lede">A mechanism for the CPU to stop what it is doing, run a function you nominated, and resume exactly where it left off. It is how the OS learns that anything happened.</p>
 
-      <h2>Two very different reasons to interrupt</h2>
+      <h2>Two different reasons to interrupt</h2>
       <p>
         Both arrive through the same table, but their causes could not be more different, and the
         lessons handle them separately.
@@ -386,7 +386,7 @@ Guide.codeWalk("w-init", {
 
 Guide.codeWalk("w-sti", {
   title: "Opening the gate, from kernel.cpp",
-  code: "gdt_init();      // segments first, gates need a code selector\nidt_init();      // then the interrupt table\npic_remap();     // then move the IRQs off the exception numbers\ntimer_init(100); // configure the timer chip\npmm_init(multiboot_info_addr);\npaging_init();\nheap_init();\nne2000_init();\n\ntext_color = make_color(VGA_WHITE, VGA_BLACK);\nclear_screen();\nprint(\"LeveretOS\\n\\n\");\n\nasm volatile (\"sti\");   // NOW allow interrupts\nshell_run();",
+  code: "gdt_init();      // segments first, gates need a code selector\nidt_init();      // then the interrupt table\npic_remap();     // then move the IRQs off the exception numbers\ntimer_init(100); // configure the timer chip\npmm_init(multiboot_info_addr);\npaging_init();\nheap_init();\nne2000_init();\n\ntext_color = make_color(VGA_WHITE, VGA_BLACK);\nclear_screen();\nprint(\"LeveretOS - Lesson 21: Ethernet and ARP\\n\\n\");\n\nasm volatile (\"sti\");   // NOW allow interrupts\nshell_run();",
   notes: [
     { lines: [1, 1], text: "The GDT comes first because every IDT gate names a code selector from it." },
     { lines: [2, 2], text: "The IDT next, so gates exist before anything can be unmasked." },

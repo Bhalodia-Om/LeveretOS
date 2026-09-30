@@ -293,7 +293,7 @@ Guide.stepper("s-dma", {
       state: { "direction": "into the card" }
     }
   ],
-  hint: "One port, one byte at a time, with the card tracking position internally. Slow by modern standards and very simple to program."
+  hint: "One port, one byte at a time, with the card tracking position internally. Slow by modern standards and simple to program."
 });
 
 Guide.memMap("m-dmaregs", {
@@ -478,7 +478,7 @@ Guide.codeWalk("w-send", {
   notes: [
     { lines: [2, 3], text: "The padded length is kept separate from the caller's length. Both are needed: one for how many real bytes to copy, the other for the total to transmit." },
     { lines: [5, 5], text: "Clearing the status bit by writing a 1 to it. Counter intuitive, but that is how this chip's status register works." },
-    { lines: [9, 10], text: "RSAR1 holds the page number and RSAR0 zero, which addresses the very start of the transmit page. Pages being 256 bytes is what makes this work so neatly." },
+    { lines: [9, 10], text: "RSAR1 holds the page number and RSAR0 zero, which addresses the start of the transmit page. Pages being 256 bytes is what makes this work so neatly." },
     { lines: [13, 15], text: "The caller's actual bytes, using the unpadded length so nothing beyond the real frame is read from their buffer." },
     { lines: [16, 18], text: "Zero padding up to the minimum. Reading past the caller's buffer would be a bug, so the padding is generated rather than copied." },
     { lines: [20, 20], text: "The wait that the lesson overview flags as a gotcha. Without it the transmit could fire while bytes are still being copied, sending a truncated frame." },

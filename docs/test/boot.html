@@ -55,7 +55,7 @@
       <div class="box info">
         <span class="t">Why the header must come first</span>
         GRUB only scans the beginning of the file. The linker script puts the
-        <code>.multiboot</code> section at the very start of <code>.text</code> for exactly this
+        <code>.multiboot</code> section at the start of <code>.text</code> for exactly this
         reason. Bury it deeper and GRUB never sees it.
       </div>
 
@@ -75,7 +75,7 @@
         So <code>.bss</code> takes up address space but almost no file space.
       </p>
       <p>
-        That is why the PMM's bitmap is essentially free on disc. It is a 128 KB array in
+        That is why the PMM's bitmap costs nothing on disc. It is a 128 KB array in
         <code>.bss</code>, and the heap's 1 MB buffer is the same. Neither one inflates the ISO.
       </p>
 
@@ -135,8 +135,8 @@
         <span class="t">The stack grows downward</span>
         <code>esp</code> is set to <code>stack_top</code>, the high address, not the bottom. Each push
         moves it <em>down</em> toward <code>stack_bottom</code>. Point it at the bottom instead and
-        the first push walks off into whatever sits below, corrupting memory in a way that is very
-        hard to diagnose.
+        the first push walks off into whatever sits below, corrupting memory with no error message and
+        no obvious trace of where it went wrong.
       </div>
 
       <h2>Passing GRUB's memory map along</h2>
@@ -196,7 +196,7 @@ Guide.stepper("s-chain", {
     {
       head: "The disc is found and GRUB loads",
       text: "The firmware finds the bootable ISO and loads GRUB from it. GRUB is a full program with a config file, a menu and the ability to understand kernel formats.",
-      code: "set timeout=0\nset default=0\nmenuentry \"LeveretOS\" {\n    multiboot /boot/kernel.bin\n    boot\n}",
+      code: "set timeout=0\nset default=0\nmenuentry \"LeveretOS - GDT\" {\n    multiboot /boot/kernel.bin\n    boot\n}",
       state: { "CPU mode": "16 bit real mode", "your code": "still not running" }
     },
     {
@@ -217,7 +217,7 @@ Guide.stepper("s-chain", {
     },
     {
       head: "boot.s sets up a stack",
-      text: "C++ cannot run without a stack, so the very first instruction points the stack pointer at a 16 KB block reserved in .bss.",
+      text: "C++ cannot run without a stack, so the first instruction points the stack pointer at a 16 KB block reserved in .bss.",
       code: "mov esp, stack_top",
       state: { "running": "boot.s", "stack": "16 KB, ready" }
     },

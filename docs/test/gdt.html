@@ -158,7 +158,7 @@
       <div id="s-farjump"></div>
 
       <p>
-        The jump goes to the very next line. Nothing moves in terms of program flow. The point is the
+        The jump goes to the next line. Nothing moves in terms of program flow. The point is the
         side effect: passing through a far jump reloads <code>CS</code> with the selector you named.
       </p>
 
@@ -382,7 +382,7 @@ Guide.stepper("s-farjump", {
     },
     {
       head: "CS refuses a move",
-      text: "The code segment register decides where the CPU is fetching instructions from. Changing it with a plain move would mean the very next instruction comes from somewhere new, mid stream. The CPU does not allow it.",
+      text: "The code segment register decides where the CPU is fetching instructions from. Changing it with a plain move would mean the next instruction comes from somewhere new, mid stream. The CPU does not allow it.",
       state: { "cs": "still GRUB's old selector" }
     },
     {

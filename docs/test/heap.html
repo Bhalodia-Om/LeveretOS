@@ -31,15 +31,15 @@
       <div id="m-why"></div>
 
       <p>
-        The PMM already hands out memory, so why not use it directly? Because its unit is far too coarse.
-        Asking for twelve bytes and receiving 4096 wastes 4084 of them, and doing that repeatedly exhausts
-        memory almost immediately.
+        The PMM already hands out memory, but its unit is far too coarse to use directly. Asking for
+        twelve bytes and receiving 4096 wastes 4084 of them, and doing that repeatedly exhausts memory
+        almost immediately.
       </p>
 
       <div class="box info">
         <span class="t">The lumber yard analogy</span>
         The PMM is a yard that only sells full pallets. The heap is the shop that buys a pallet and cuts you
-        the exact plank you asked for. Same wood, very different granularity.
+        the exact plank you asked for. Same wood, different unit of sale.
       </div>
 
       <h2>Where the memory comes from</h2>
@@ -51,7 +51,7 @@
 
       <p>
         Because it is uninitialised it lands in <code>.bss</code>, so it costs a megabyte of address space
-        and essentially nothing in the ISO. The same trick the PMM bitmap uses, explained on the
+        and nothing at all in the ISO. The same trick the PMM bitmap uses, explained on the
         <a href="boot.html">boot page</a>.
       </p>
 
@@ -93,7 +93,7 @@
 
       <h2>Setting up</h2>
       <p>
-        Initialisation lays a single free block over the entire region. One header at the very start, and
+        Initialisation lays a single free block over the entire region. One header at the start, and
         everything after it is usable.
       </p>
 
@@ -510,7 +510,7 @@ Guide.quiz("q-1mb", {
     { text: "It has to fit inside the 4 MB that paging identity maps", correct: true, why: "Right. The paging lesson maps only the first 4 MB of address space, and the kernel plus the PMM bitmap plus the heap all live inside it. A 16 MB static array would extend past the mapped region, and touching the far end would raise a page fault. Growing the heap properly means mapping new frames on demand, which the lessons deferred." },
     { text: "1 MB is the largest array C++ allows in .bss", why: "There is no such limit. The constraint is the mapped address space, not the language." },
     { text: "Because the PMM only has 1 MB free", why: "The PMM reports about 128 MB free. The heap does not take its region from the PMM at all, it is a static array." },
-    { text: "Larger arrays would make the ISO too big", why: "The array is in .bss so it costs essentially nothing in the ISO regardless of size." }
+    { text: "Larger arrays would make the ISO too big", why: "The array is in .bss so it adds nothing to the ISO regardless of size." }
   ]
 });
 
