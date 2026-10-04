@@ -73,19 +73,8 @@
       gateway's MAC.
     </p>
 
-    <h2>What it looks like</h2>
-    <p>Here is the "arp" command finding the gateway on a network.</p>
-    <div class="shot">
-      <img src="arp-demo.png" alt="The arp command resolving the gateway: 10.0.2.2 is at 52:55:0A:00:02:02" />
-      <div class="cap">The OS asks who has the IP of "10.0.2.2", and the gateway replies with its MAC address.</div>
-    </div>
-
     <h2>Boot it in your browser</h2>
     <p>Run the LeveretOS lesson-21 ISO, emulated with <a href="https://github.com/copy/v86">v86</a>.</p>
-
-    <div class="warn-box">
-      <strong>Heads up:</strong> the "arp" command needs a network with a gateway for an answer. The screenshot above is from a real test, with a network connection. In the emulator there is no network yet, so the command will time out. In-browser networking will come in a later lesson.
-    </div>
 
     <div class="emu-wrap">
       <button class="boot-btn" id="boot">&#9654; Boot LeveretOS (Lesson 21)</button>
@@ -149,7 +138,8 @@
         screen_container: document.getElementById("screen_container"),
         bios:     { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/seabios.bin" },
         vga_bios: { url: "https://cdn.jsdelivr.net/gh/copy/v86@latest/bios/vgabios.bin" },
-        cdrom:    { url: "LeveretOS-EthernetARP.iso" },
+        cdrom:    { url: "LeveretOS-EthernetARP-relay.iso" },
+        net_device: { type: "ne2k", relay_url: "wss://relay.leveretos.me/" },
         autostart: true,
       });
       emulator.add_listener("emulator-ready", function () { status.textContent = "Booting…"; });
