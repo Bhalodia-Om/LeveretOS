@@ -1,0 +1,35 @@
+This lesson will add an IPv4 (Internet Protocol version 4) layer on top of the previous ethernet layer. This packet will carry an actual internet address, which the router will answer.
+
+Part 1, the IPv4 header:
+- Every IPv4 packet starts with a 20-byte header, then we put the payload.
+- The fields, in order are:
+    - version and header length as one byte (0x45).
+    - the DSCP/ECN, with the DSCP (Differentiated Services Code Point) byte that tells the network the priority level of our data, and ECN (Explicit Congestion Notification) which warns our device of network congestion
+    - the total length of the header + payload. 
+    - an identification number.
+    - flags and fragment offset (we don't fragment, so 0).
+    - a time to live (64), counts the amount of routers our data can hop before it destroys itself. 
+    - protocol number saying what is in the payload. 
+    - a header checksum, a check to make sure our header did not get corrupted.
+    - the source IP.
+    - and the destination IP.
+- All fields with multiple bytes are big-endian, with the high byte written first.
+
+Part 2, the header checksum:
+- the checksum tells the receiver if the header was corrupted in any way.
+- We treat the header as a list of 16-bit words and add them all up. That running total can carry past 16 bits, so we fold the top 16 bits back into the bottom 16 bits and repeat until nothing carries.
+- All bits in the checksum are then flipped, so that the receiver can add the whole header sum back and if the result is 0xFFFF, it can confirm the header is correct.
+
+Part 3, ip_send and ip_receive:
+- ip_send (order: dest_ip, protocol, payload, length): gets the gateway MAC with arp_resolve, builds the header, creates the check sum, and attaches it before the payload, then sends it with ethertype 0x0800.
+- ip_receive: polls eth_receive, and for an IPv4 frame first verifies the checksum, checks if the destination IP is ours, removes the header, and returns the sender IP, protocol number, and a pointer to the payload.
+
+Part 4, the ping command:
+- We make an echo request, and send it to 10.0.2.2 via ip_send. We then poll ip_receive for a reply. We then print out the source IP.
+
+Our IP: QEMU user-net assigns us 10.0.2.15 and puts the gateway at 10.0.2.2.
+
+Files changed / added:
+- src/net/ipv4.h / ipv4.cpp     (new: ip_send, ip_receive, the checksum)
+- src/shell/shell.cpp           (add the "ping" command and help text)
+- src/kernel.cpp                (banner)

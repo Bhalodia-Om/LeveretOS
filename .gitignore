@@ -17,3 +17,9 @@ docs/ADDING-A-LESSON.private.md
 
 # Private lesson log for coming beginners guide
 BUG-LOG.private.md
+
+# Kiro specs, tooling and review notes for the guide. Kept local only.
+.kiro/
+
+# Private website-text drafts for each lesson.
+LESSON-*-TEXT.private.md
