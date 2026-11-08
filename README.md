@@ -69,6 +69,7 @@ Once we can browse the web, the goals will get bigger. This is where LeveretOS w
 | 20 | Send and Receive | Send ethernet frames out of the network card |
 | 21 | Ethernet and ARP | An Ethernet layer to create headers, and ARP to find a machine's MAC from its IP |
 | 22 | IPv4 | Put data into IPv4 packets alongside a checksum, and ping the router |
+| 23 | UDP | Send UDP datagrams to ports, and use that to ask a time server over the internet for the time |
 
 ## Building and running a lesson
 

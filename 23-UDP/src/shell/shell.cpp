@@ -1,0 +1,253 @@
+#include "shell.h"
+#include "vga.h"       // print, putchar, clear_screen
+#include "keyboard.h"  // read_line
+#include "string.h"    // strcmp
+#include "rtc.h"       // rtc_read
+#include "pmm.h"       // pmm_total_frames, pmm_used_frames
+#include "heap.h"      // malloc, free, heap_total_bytes, heap_used_bytes
+#include "pci.h"       // pci_scan
+#include "ne2000.h"    // ne2000_get_mac
+#include "arp.h"       // arp_resolve
+#include "ipv4.h"      // ip_send, ip_receive, IP_PROTO_ICMP
+#include "udp.h"       // udp_send, udp_receive
+#include "timer.h"     // timer_ticks, timer_frequency
+
+// Print a number as two digits (7 -> 07), so that the clock can read like HH:MM:SS.
+static void print_two(uint8_t n) {
+    putchar('0' + (n / 10));   // tens digit
+    putchar('0' + (n % 10));   // ones digit
+}
+
+// Run one command line, where we compare the typed text against set commands.
+static void run_command(const char* line) {
+    if (strcmp(line, "help") == 0) {                                                            // Show commands we have.
+        print("Commands: help, clear, about, echo <text>, clock, mem, heaptest, lspci, nic, net, arp, ping, ntp\n");
+    } else if (strcmp(line, "clear") == 0) {                                                      // Clear screen.
+        clear_screen();
+    } else if (strcmp(line, "about") == 0) {                                                      // about the system. We can add other stuff here about our OS if we wish to.
+        print("LeveretOS - a small OS built from scratch, one lesson at a time.\n");
+        // "echo <text>": if the line starts with "echo ", print everything after it.
+    } else if (line[0]=='e' && line[1]=='c' && line[2]=='h' && line[3]=='o' && line[4]==' ') {    // Can't use strcmp because we only need to check the first bit.
+        print(line + 5);   // line + 5 skips past echo to the text.
+        putchar('\n');
+    } else if (line[0] == '\0') {
+        // Empty line (only pressed Enter), so do nothing.
+    } else if (strcmp(line, "clock") == 0) {                    // Show the current time from the RTC.
+        RtcTime t = rtc_read();
+        print_two(t.hour);
+        putchar(':');
+        print_two(t.minute);
+        putchar(':');
+        print_two(t.second);
+        putchar('\n');
+    } else if (strcmp(line, "mem") == 0) {                      // Show memory usage.
+        uint32_t total = pmm_total_frames();
+        uint32_t used  = pmm_used_frames();
+        print("Usable RAM: ");
+        print_int(total * 4);
+        print(" KB, used: ");
+        print_int(used * 4);
+        print(" KB, free: ");
+        print_int((total - used) * 4);
+        print(" KB\n");
+    } else if (strcmp(line, "heaptest") == 0) {                // Prove malloc / free work.
+        print("heap total: ");
+        print_int(heap_total_bytes());
+        print(" bytes, used: ");
+        print_int(heap_used_bytes());
+        print(" bytes\n");
+
+        // Ask for two blocks, to see if bytes climb.
+        void* a = malloc(100);
+        print("after malloc(100), used: ");
+        print_int(heap_used_bytes());
+        print(" bytes\n");
+
+        void* b = malloc(200);
+        print("after malloc(200), used: ");
+        print_int(heap_used_bytes());
+        print(" bytes\n");
+
+        // Free the blocks to see bytes drop.
+        free(a);
+        print("after free(a),     used: ");
+        print_int(heap_used_bytes());
+        print(" bytes\n");
+        free(b);
+        print("after free(b),     used: ");
+        print_int(heap_used_bytes());
+        print(" bytes\n");
+    } else if (strcmp(line, "lspci") == 0) {                   // List PCI devices.
+        pci_scan();
+    } else if (strcmp(line, "nic") == 0) {                     // Show the network Interface Card's MAC address.
+        uint8_t mac[6];
+        ne2000_get_mac(mac);
+        const char* hex = "0123456789ABCDEF";
+        print("MAC: ");
+        for (int i = 0; i < 6; i++) {
+            putchar(hex[(mac[i] >> 4) & 0xF]);
+            putchar(hex[mac[i] & 0xF]);
+            if (i < 5) putchar(':');           // colons between bytes to improve readability.
+        }
+        putchar('\n');
+
+    } else if (strcmp(line, "net") == 0) {                     // Build and send one test frame.
+        uint8_t frame[64];  // Small test frame: dest MAC (broadcast), src MAC (ours), and then some bytes.
+        uint8_t our_mac[6];
+        ne2000_get_mac(our_mac);
+        for (int i = 0; i < 6; i++) frame[i] = 0xFF;           // dest = broadcast
+        for (int i = 0; i < 6; i++) frame[6 + i] = our_mac[i]; // src = us
+        frame[12] = 0xAB; frame[13] = 0xCD;                    // type field, unused for this test. Represents the communication protocol.
+        frame[14] = 'H'; frame[15] = 'I';                      // 2 bytes of data sent
+
+        print("Sending a test frame from ");
+        const char* hex = "0123456789ABCDEF";
+        for (int i = 0; i < 6; i++) {
+            putchar(hex[(our_mac[i] >> 4) & 0xF]);
+            putchar(hex[our_mac[i] & 0xF]);
+            if (i < 5) putchar(':');
+        }
+        print(" (broadcast)...\n");
+
+        ne2000_send(frame, 16);
+        print("Frame sent.\n");
+
+    } else if (strcmp(line, "arp") == 0) {                 // Resolve the gateway's MAC via ARP.
+        uint8_t gateway_ip[4] = { 10, 0, 2, 2 };               // QEMU user-net gateway to the nework.
+        uint8_t mac[6];
+
+        print("ARP: asking who has 10.0.2.2...\n");
+        if (arp_resolve(gateway_ip, mac)) {
+            const char* hex = "0123456789ABCDEF";
+            print("10.0.2.2 is at ");
+            for (int i = 0; i < 6; i++) {
+                putchar(hex[(mac[i] >> 4) & 0xF]);
+                putchar(hex[mac[i] & 0xF]);
+                if (i < 5) putchar(':');
+            }
+            putchar('\n');
+        } else {
+            print("No ARP reply, timed out.\n");
+        }
+    } else if (strcmp(line, "ping") == 0) {                    // Send an ICMP echo request to the gateway.
+        uint8_t gateway_ip[4] = { 10, 0, 2, 2 };  
+
+        // Build an 8-byte ICMP echo request.
+        uint8_t icmp[8];
+        icmp[0] = 8;      // type 8 means echo request.
+        icmp[1] = 0;      // code 0.
+        icmp[2] = 0;      // checksum high byte, zero while we compute it.
+        icmp[3] = 0;      // checksum low byte.
+        icmp[4] = 0x00;   // identifier high.
+        icmp[5] = 0x01;   // identifier low.
+        icmp[6] = 0x00;   // sequence number high.
+        icmp[7] = 0x01;   // sequence number low.
+
+        // ICMP has its own checksum, calculated the same way as the IP header one, over the whole ICMP message, with its own checksum field at zero.
+        // We do it here as ipv4.cpp's ip_checksum helper is private.
+        uint32_t sum = 0;
+        for (int i = 0; i < 8; i += 2) sum += ((uint16_t)icmp[i] << 8) | icmp[i + 1];
+        while (sum >> 16) sum = (sum & 0xFFFF) + (sum >> 16);
+        uint16_t csum = (uint16_t)(~sum);
+        icmp[2] = (csum >> 8) & 0xFF;
+        icmp[3] = csum & 0xFF;
+
+        print("PING 10.0.2.2...\n");
+        if (!ip_send(gateway_ip, IP_PROTO_ICMP, icmp, 8)) {
+            print("No ARP reply from gateway, cannot send.\n");
+        } else {
+            // Poll for a reply. An ICMP echo reply has type 0 for the first payload byte.
+            bool got = false;
+            for (int tries = 0; tries < 400000; tries++) {
+                uint8_t  src_ip[4];
+                uint8_t  proto;
+                uint8_t* payload;
+                uint16_t len = ip_receive(src_ip, &proto, &payload);
+                if (len == 0) continue;
+                if (proto != IP_PROTO_ICMP) continue;
+                if (len < 1 || payload[0] != 0) continue;   // not an echo reply (type 0)
+
+                print("Reply from ");
+                print_int(src_ip[0]); putchar('.');
+                print_int(src_ip[1]); putchar('.');
+                print_int(src_ip[2]); putchar('.');
+                print_int(src_ip[3]);
+                print(": icmp echo reply\n");
+                got = true;
+                break;
+            }
+            if (!got) print("Request timed out.\n");
+        }
+    } else if (strcmp(line, "ntp") == 0) {  // Ask a public time server for the time.
+        uint8_t  ntp_server[4] = { 216, 239, 35, 0 };  // time1.google.com. Public time server.
+        uint16_t our_port = 50123;                             // Source port.
+    
+        // NTP requests are 48 bytes. Only the first byte means anything for us, so the rest can stay zero.
+        // 0x1B = 00 011 011: leap indicator 0, version 3, mode 3 (a client asking for the time).
+        uint8_t request[48];
+        for (int i = 0; i < 48; i++) request[i] = 0;
+        request[0] = 0x1B;
+
+        print("NTP: asking 216.239.35.0 for the time...\n");
+        if (!udp_send(ntp_server, our_port, 123, request, 48)) {
+            print("No ARP reply from gateway, cannot send.\n");
+        } else {
+            // The reply may take a while to come through, as it is over the internet.
+            // Wait up to 3 seconds, using the timer.
+            uint32_t start = timer_ticks();
+            uint32_t limit = timer_frequency() * 3;
+            bool got = false;
+
+            while (timer_ticks() - start < limit) {
+                uint8_t  src_ip[4];
+                uint16_t src_port;
+                uint8_t* reply;
+                uint16_t len = udp_receive(src_ip, &src_port, our_port, &reply);
+
+                if (len < 48) continue;                     // nothing, or too short to be an NTP reply.
+                if (src_port != 123) continue;              // not from an NTP server.
+                if ((reply[0] & 0x07) != 4) continue;       // low 3 bits are the mode, 4 means a server reply.
+
+                // bytes 40-43 are the transmit timestamp, which is the seconds since January 1st, 1900, big-endian.
+                uint32_t seconds = ((uint32_t)reply[40] << 24) | ((uint32_t)reply[41] << 16) | ((uint32_t)reply[42] << 8)  |  (uint32_t)reply[43];
+
+                // We only want the time of day. 1 day is 86400 seconds, and the remainder is the seconds past midnight UTC today.
+                uint32_t day_seconds = seconds % 86400;
+                uint8_t  hour   = day_seconds / 3600;
+                uint8_t  minute = (day_seconds % 3600) / 60;
+                uint8_t  second = day_seconds % 60;
+
+                print("Time from server (UTC): ");
+                print_two(hour);
+                putchar(':');
+                print_two(minute);
+                putchar(':');
+                print_two(second);
+                putchar('\n');
+
+                // Challenge: using the time from the server, calculate the current date, month, and year. Remember leap years exist!
+
+                got = true;
+                break;
+            }
+            if (!got) print("No reply from time server, timed out.\n");
+        }
+    } else {
+        print("Unknown command: ");
+        print(line);
+        putchar('\n');
+    }
+}
+
+// The shell loop. We print a prompt, wait for a line, and run it, repeating forever.
+void shell_run() {
+    char line[128]; // Buffer for the inputted line.
+
+    print("Type 'help' for a list of commands.\n\n");
+
+    while (true) {
+        print("> ");                     // the prompt, showing that our shell is ready to accept a command.
+        read_line(line, sizeof(line));   // wait until the user types a line and enters
+        run_command(line);               // handle the command.
+    }
+}

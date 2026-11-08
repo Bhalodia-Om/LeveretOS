@@ -1,0 +1,47 @@
+This lesson will add a UDP (User Datagram Protocol) layer above our IPv4 layer from lesson 22. We will then use it to ask a real time server from the internet for the time, which will be our first outside communication!
+UDP is a communication protocol that will send data packets without any prior communication or handshake.
+
+Part 1, ports:
+- An IP address will send a packet to the right computer, but one computer may be running multiple programs at once.
+- A port is a 16-bit number that each program on a computer is assigned. A server will listen from a port, such as 53 for DNS or 123 for NTP (Network Time Protocol).
+- We also need to pick our own port, so the server knows where to send its reply.
+
+Part 2, the UPD header:
+- Every UDP datagram (a packet of data sent without a peer-to-pear connection) starts with an 8-byte header, followed by the payload.
+- The fields are:
+    - source port (2 bytes)
+    - destination port (2 bytes)
+    - length of header + payload (2 bytes)
+    - checksum to avoid corruption (2 bytes)
+- fields are big-endian
+- UDP doesn't check if the data arrived, ore in the correct order, and just sends it hoping for a reponse, making it simple and fast.
+
+Part 3, checksum: 
+- checksum is the same ones-complemented sum as the IPv4 header checksum, so we used the same ip_checksum function instead of needing to write another.
+- This will cover more that just the header. We first build a pseudo-header, which includes the source IP, destination IP, a zero byte, protocol number (17), and the UDP length. The checksum includes the pseudo-header, UDP header, and the payload.
+- The pseudo header is only used for the sum, letting the receiver know if the datagram went to the wrong address.
+- UDP data can end up being odd, so the final odd byte will be padded with a 0.
+- A checksum of 0 means there is "no checksum" present in the UDP, so instead we send 0xFFFF in place of 0.
+
+Part 4, udp_send and udp_receive:
+- udp_send (ordered: dest_ip, src_port, dest_port, payload, length): build the 8 byte header, get a checksum with our pseudo-header, and give the datagram to ip_send to send off.
+- udp_receive: polls ip_receive, and if an UDP datagram arrives, check that the destination port is us. If so, verify the checksum, return the sender IP, sender port, and a pointer the receieved payload.
+
+Part 5, the ntp (Network Time Protocol) command:
+- send a 48-byte NTP request to Google's time keeping server at 216.239.35.0 on port 123. The first byte will be 0x1B, saying it is a request, and the rest is zero.
+- The server will send back a timestamp, which is the number of seconds since January 1st 1900, in bytes 40-43 of its reply.
+- We then turn those seconds into hours, minutes and seconds (UTC) and print to terminal. We can also compare it to the internet's time against our own clock that we set up in lesson 13.
+
+QEMU currently assings us 10.0.2.15 and puts the router at 10.0.0.2. The packet goes to the router, and is then forwarded to the internet.
+
+New concepts:
+- Ports
+- UDP header
+- Pseudo-header checksum
+- Talking over the internet.
+
+Files changed / added:
+- src/net/ipv4.h / ipv4.cpp     (shared ip_checksum with odd lengths, get_ip)
+- src/net/udp.h / udp.cpp       (new: udp_send, udp_receive)
+- src/shell/shell.cpp           (add the "ntp" command and help text)
+- src/kernel.cpp                (banner)
